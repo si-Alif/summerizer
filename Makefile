@@ -72,6 +72,22 @@ db/migrations/new :
 	@echo "Creating new migration for ${name}..."
 	migrate create -seq -ext=.sql -dir=./migrations ${name}
 
+## db/migrations/down n=$1 : roll back n migrations
+.PHONY: db/migrations/down
+db/migrations/down:
+	@echo 'Rolling back $(n) migration(s)...'
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} down $(n)
+
+## db/migrations/force v=$1 : force migration version (use after dirty state)
+.PHONY: db/migrations/force
+db/migrations/force:
+	@echo 'Forcing migration version to $(v)...'
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} force $(v)
+
+## db/migrations/version : show current migration version
+.PHONY: db/migrations/version
+db/migrations/version:
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} version
 
 # =================================================================
 # QUALITY CONTROL COMMANDS
