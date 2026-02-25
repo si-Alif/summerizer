@@ -19,6 +19,34 @@ confirm :
 
 
 # =================================================================
+# DOCKER COMMANDS
+# =================================================================
+
+## db/start : start the database container
+.PHONY: db/start
+db/start:
+	docker compose up -d
+	@echo "Waiting for Postgres to be ready..."
+	@until docker compose exec db pg_isready -U summerizer > /dev/null 2>&1; do sleep 0.5; done
+	@echo "Postgres is ready."
+
+## db/stop : stop the database container (data preserved)
+.PHONY: db/stop
+db/stop:
+	docker compose down
+
+## db/destroy : stop and delete all database data
+.PHONY: db/destroy
+db/destroy: confirm
+	docker compose down -v
+	@echo "Database data destroyed."
+
+## db/logs : show database container logs
+.PHONY: db/logs
+db/logs:
+	docker compose logs -f db
+
+# =================================================================
 # DEVELOPMENT COMMANDS
 # =================================================================
 
