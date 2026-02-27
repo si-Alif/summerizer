@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/si-Alif/summerizer/internal/validator"
 )
 
@@ -31,7 +32,6 @@ func ValidateCollection(v *validator.Validator, collection *Collection) {
 	v.Check(len(collection.Description) <= 5000, "description", "must not be more than 5000 characters")
 }
 
-
 type CollectionModel struct {
 	DB *sql.DB
 }
@@ -44,25 +44,36 @@ func (m CollectionModel) Insert(collection *Collection) error {
 
 	args := []any{collection.UserID, collection.Title, collection.Description, collection.Max_Sources}
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	return  m.DB.QueryRowContext(ctx, query, args...).Scan(&collection.ID, &collection.CreatedAt, &collection.UpdatedAt, &collection.Version)
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&collection.ID, &collection.CreatedAt, &collection.UpdatedAt, &collection.Version)
 
+	if err != nil {
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.Code == "23505":
+			return ErrDuplicateRecord
+		default:
+			return err
+		}
+	}
+
+	return nil
 }
 
-func (m CollectionModel) GetByID(id int64) (*Collection, error) {
+func (m CollectionModel) GetByID(id int64, userId int64) (*Collection, error) {
 	query := `
 	SELECT id, user_id, title, description, max_sources, created_at, updated_at, version
 	FROM collections
-	WHERE id = $1`
+	WHERE id = $1 AND user_id = $2`
 
 	var collection Collection
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	err := m.DB.QueryRowContext(ctx, query, id).Scan(
+	err := m.DB.QueryRowContext(ctx, query, id, userId).Scan(
 		&collection.ID,
 		&collection.UserID,
 		&collection.Title,
@@ -75,27 +86,26 @@ func (m CollectionModel) GetByID(id int64) (*Collection, error) {
 
 	if err != nil {
 		switch {
-			case errors.Is(err, sql.ErrNoRows):
-				return nil, ErrRecordNotFound
-			default:
-				return nil, err
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
 		}
 	}
 
 	return &collection, nil
 }
 
-
-func (m CollectionModel) GetAll(userID int64 , title string , filters Filters) ([]*Collection,Metadata ,error) {
+func (m CollectionModel) GetAll(userID int64, title string, filters Filters) ([]*Collection, Metadata, error) {
 	query := fmt.Sprintf(`
-	SELECT id, user_id, title, description, max_sources, created_at, updated_at, version
+	SELECT count(*) OVER(), id, user_id, title, description, max_sources, created_at, updated_at, version
 	FROM collections
 	WHERE user_id = $1
 	AND (to_tsvector('simple',title) @@ plainto_tsquery('simple' , $2) OR $2='')
 	ORDER BY %s %s , id ASC
-	LIMIT $3 OFFSET $4` , filters.SortColumn(), filters.SortDirection())
+	LIMIT $3 OFFSET $4`, filters.SortColumn(), filters.SortDirection())
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	rows, err := m.DB.QueryContext(ctx, query, userID, title, filters.Limit(), filters.Offset())
@@ -143,22 +153,22 @@ func (m CollectionModel) Update(collection *Collection) error {
 	query := `
 	UPDATE collections
 	SET title = $1, description = $2, max_sources = $3, version = version + 1
-	WHERE id = $4 AND version = $5
+	WHERE id = $4 AND user_id = $5 AND version = $6
 	RETURNING updated_at, version`
 
-	args := []any{collection.Title, collection.Description, collection.Max_Sources, collection.ID, collection.Version}
+	args := []any{collection.Title, collection.Description, collection.Max_Sources, collection.ID, collection.UserID, collection.Version}
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&collection.UpdatedAt, &collection.Version)
 
 	if err != nil {
 		switch {
-			case errors.Is(err, sql.ErrNoRows):
-				return ErrEditConflict
-			default:
-				return err
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrEditConflict
+		default:
+			return err
 		}
 	}
 
@@ -166,13 +176,13 @@ func (m CollectionModel) Update(collection *Collection) error {
 
 }
 
-func (m CollectionModel) Delete(id int64) error {
-	query := `DELETE FROM collections WHERE id = $1`
+func (m CollectionModel) Delete(id int64, userID int64) error {
+	query := `DELETE FROM collections WHERE id = $1 AND user_id = $2`
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	result, err := m.DB.ExecContext(ctx, query, id)
+	result, err := m.DB.ExecContext(ctx, query, id, userID)
 
 	if err != nil {
 		return err

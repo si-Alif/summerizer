@@ -17,6 +17,7 @@ func (app *application) routes() http.Handler {
 
 	// collection routes — will be wrapped with requireAuthenticatedUser once auth is wired (Step 5)
 	router.HandlerFunc(http.MethodGet, "/v1/collections/:id", app.showCollectionHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/collections", app.createCollectionHandler)
 
 	// source routes
 

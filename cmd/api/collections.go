@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
-	"time"
+	// "time"
 
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/validator"
@@ -15,15 +17,15 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// TODO: replace with app.models.Collections.Get(id) once DB is wired
-	collection := data.Collection{
-		ID:          id,
-		UserID:      1,
-		Title:       "Go Concurrency",
-		Description: "Resources about Go concurrency patterns",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		Version:     1,
+	collection, err := app.models.Collections.GetByID(id , app.GetUserFromSubsequentRequestContext(r).ID)
+	if err != nil {
+		switch {
+		case errors.Is(err , data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
 	}
 
 	// TODO: replace with app.models.Sources.GetStatusSummary(collection.ID)
@@ -36,7 +38,6 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 		"failed":    0,
 	}
 
-	// TODO: verify ownership — contextGetUser(r).ID == collection.UserID
 
 	err = app.writeJSON(w, http.StatusOK, envelop{
 		"collection":     collection,
@@ -60,9 +61,10 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 	}
 
 	collection := &data.Collection{
-		UserID:      1, // TODO: replace with contextGetUser(r).ID
+		UserID:      app.GetUserFromSubsequentRequestContext(r).ID,
 		Title:       input.Title,
 		Description: input.Description,
+		Max_Sources: 13,
 	}
 
 	v := validator.New()
@@ -71,9 +73,25 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// TODO: check collection count per user (max 20) before insert
-	// TODO: app.models.Collections.Insert(collection)
-	// TODO: return 201 Created with collection JSON + Location header
+	err = app.models.Collections.Insert(collection)
+	if err != nil {
+		switch {
+			case errors.Is(err , data.ErrDuplicateRecord):
+				app.duplicateResourceResponse(w , r , "collection with this title already exists")
+			default:
+				app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	headers := make(http.Header)
+	headers.Set("Location", fmt.Sprintf("/v1/collections/%d", collection.ID))
+
+	err = app.writeJSON(w, http.StatusCreated, envelop{"collection": collection}, headers)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+
 
 }
 
