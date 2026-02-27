@@ -20,7 +20,7 @@ func (app *application) routes() http.Handler {
 
 	// source routes
 
-	router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
+	// router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
 
 
 	return router

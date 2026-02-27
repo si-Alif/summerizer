@@ -77,43 +77,43 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 
 }
 
-// updateCollectionHandler handles PATCH /v1/collections/:id
-// Supports partial updates — only provided fields are updated.
-func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := app.readIDParam(r)
-	if err != nil {
-		app.notFoundResponse(w, r)
-		return
-	}
+// // updateCollectionHandler handles PATCH /v1/collections/:id
+// // Supports partial updates — only provided fields are updated.
+// func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.Request) {
+// 	id, err := app.readIDParam(r)
+// 	if err != nil {
+// 		app.notFoundResponse(w, r)
+// 		return
+// 	}
 
-	// TODO: replace with app.models.Collections.Get(id) once DB is wired
-	_ = id
+// 	// TODO: replace with app.models.Collections.Get(id) once DB is wired
+// 	_ = id
 
-	// Use pointer fields to distinguish "not provided" (nil) from "provided empty"
-	var input struct {
-		Title       *string `json:"title"`
-		Description *string `json:"description"`
-	}
+// 	// Use pointer fields to distinguish "not provided" (nil) from "provided empty"
+// 	var input struct {
+// 		Title       *string `json:"title"`
+// 		Description *string `json:"description"`
+// 	}
 
-	err = app.readJSON(w, r, &input)
-	if err != nil {
-		app.badRequestResponse(w, r, err)
-		return
-	}
+// 	err = app.readJSON(w, r, &input)
+// 	if err != nil {
+// 		app.badRequestResponse(w, r, err)
+// 		return
+// 	}
 
-	v := validator.New()
-	if data.ValidateCollectionUpdate(v, input.Title, input.Description); !v.Valid() {
-		app.failedValidationResponse(w, r, v.Errors)
-		return
-	}
+// 	v := validator.New()
+// 	if data.ValidateCollectionUpdate(v, input.Title, input.Description); !v.Valid() {
+// 		app.failedValidationResponse(w, r, v.Errors)
+// 		return
+// 	}
 
-	// TODO: verify ownership — contextGetUser(r).ID == collection.UserID
-	// TODO: apply non-nil fields to the fetched collection
-	// TODO: app.models.Collections.Update(collection) — with optimistic locking
-	// TODO: on ErrEditConflict → editConflictResponse
-	// TODO: return 200 with updated collection JSON
+// 	// TODO: verify ownership — contextGetUser(r).ID == collection.UserID
+// 	// TODO: apply non-nil fields to the fetched collection
+// 	// TODO: app.models.Collections.Update(collection) — with optimistic locking
+// 	// TODO: on ErrEditConflict → editConflictResponse
+// 	// TODO: return 200 with updated collection JSON
 
-}
+// }
 
 // deleteCollectionHandler handles DELETE /v1/collections/:id
 func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,27 +132,45 @@ func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.R
 
 // listCollectionsHandler handles GET /v1/collections?page=1&page_size=20
 func (app *application) listCollectionsHandler(w http.ResponseWriter, r *http.Request) {
-	v := validator.New()
 
-	// Parse pagination from query string with defaults
-	page := app.readIntQueryParameter(r, "page", 1, v)
-	pageSize := app.readIntQueryParameter(r, "page_size", 20, v)
-
-	filters := data.Filters{
-		Page:     page,
-		PageSize: pageSize,
+	var input struct {
+		Title string
+		data.Filters
 	}
 
-	data.ValidateFilters(v, filters)
+	v := validator.New()
 
-	if !v.Valid() {
+	qrs := r.URL.Query()
+
+	input.Title = app.readString(qrs , "title" , "")
+	input.Filters.Page = app.readInt(qrs , "page" , 1 , v)
+	input.Filters.PageSize = app.readInt(qrs , "page_size" , 20 , v)
+	input.Filters.Sort = app.readString(qrs , "sort" , "id")
+	input.Filters.SortSafeList = []string{"id", "title", "created_at", "-id", "-title", "-created_at"}
+
+
+
+	if data.ValidateFilters(v, input.Filters) ; !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
-	// TODO: userID := contextGetUser(r).ID
-	// TODO: collections, metadata, err := app.models.Collections.ListByUser(userID, filters)
-	// TODO: return 200 with { metadata, collections }
-	_ = filters
+	user := app.GetUserFromSubsequentRequestContext(r)
+	collections, metadata, err := app.models.Collections.GetAll(user.ID , input.Title , input.Filters)
+
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{
+		"metadata":    metadata,
+		"collections": collections,
+	}, nil)
+
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
 
 }

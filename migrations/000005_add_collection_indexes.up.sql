@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS collections_title_index ON collections USING GIN(to_tsvector('simple' , title));

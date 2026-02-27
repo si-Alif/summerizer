@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS collections_title_index;

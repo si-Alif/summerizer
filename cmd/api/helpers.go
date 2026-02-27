@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -38,30 +39,6 @@ func (app *application) readIDParam(r *http.Request) (int64, error) {
 	return id, nil
 }
 
-// returns a query string parameter value, or the provided default if the key is missing or empty.
-func (app *application) readStringQueryParameter(r *http.Request, key string, defaultValue string) string {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return defaultValue
-	}
-	return s
-}
-
-// reads an integer query string parameter. Returns the default value if the key is missing.
-// Records a validation error if the value isn't a valid integer.
-func (app *application) readIntQueryParameter(r *http.Request, key string, defaultValue int, v *validator.Validator) int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return defaultValue
-	}
-
-	i, err := strconv.Atoi(s)
-	if err != nil {
-		v.AddError(key, "must be an integer value")
-		return defaultValue
-	}
-	return i
-}
 
 func (app *application) writeJSON(w http.ResponseWriter, status int, data envelop, headers http.Header) error {
 	js, err := json.MarshalIndent(data, "", "\t")
@@ -136,4 +113,40 @@ func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst any
 
 	return nil
 
+}
+
+
+func (app *application) readString(vals url.Values , key,defaultValue string) string {
+	val := vals.Get(key)
+
+	if val == "" {
+		return defaultValue
+	}
+
+	return val
+}
+
+func (app *application) readCSV(vals url.Values , key string, defaultValue []string) []string {
+	val := vals.Get(key)
+
+	if val == "" {
+		return defaultValue
+	}
+
+	return  strings.Split(val , ",")
+}
+
+func (app *application) readInt(vals url.Values , key string, defaultValue int , v *validator.Validator) int {
+	val := vals.Get(key)
+
+	if val == "" {
+		return defaultValue
+	}
+
+	i, err := strconv.Atoi(val)
+	if err != nil {
+		v.AddError(key, "must be an integer value")
+		return defaultValue
+	}
+	return i
 }
