@@ -23,7 +23,7 @@ type Collection struct {
 }
 
 func ValidateCollection(v *validator.Validator, collection *Collection) {
-	v.Check(collection.Title != "", "title", "must be provided")
+	v.Check(validator.NotBlank(collection.Title), "title", "must be provided")
 	v.Check(len(collection.Title) <= 200, "title", "must not be more than 200 characters")
 
 	v.Check(collection.Max_Sources > 0, "max_sources", "must be greater than 0")
@@ -164,11 +164,14 @@ func (m CollectionModel) Update(collection *Collection) error {
 	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&collection.UpdatedAt, &collection.Version)
 
 	if err != nil {
+		var pgErr *pgconn.PgError
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			return ErrEditConflict
+				return ErrEditConflict
+		case errors.As(err, &pgErr) && pgErr.Code == "23505":
+				return ErrDuplicateRecord
 		default:
-			return err
+				return err
 		}
 	}
 

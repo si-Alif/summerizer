@@ -95,43 +95,78 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 
 }
 
-// // updateCollectionHandler handles PATCH /v1/collections/:id
-// // Supports partial updates — only provided fields are updated.
-// func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.Request) {
-// 	id, err := app.readIDParam(r)
-// 	if err != nil {
-// 		app.notFoundResponse(w, r)
-// 		return
-// 	}
+// updateCollectionHandler handles PATCH /v1/collections/:id
+// Supports partial updates — only provided fields are updated.
+func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.Request) {
 
-// 	// TODO: replace with app.models.Collections.Get(id) once DB is wired
-// 	_ = id
+	collection_id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
 
-// 	// Use pointer fields to distinguish "not provided" (nil) from "provided empty"
-// 	var input struct {
-// 		Title       *string `json:"title"`
-// 		Description *string `json:"description"`
-// 	}
 
-// 	err = app.readJSON(w, r, &input)
-// 	if err != nil {
-// 		app.badRequestResponse(w, r, err)
-// 		return
-// 	}
+	collection, err := app.models.Collections.GetByID(collection_id , app.GetUserFromSubsequentRequestContext(r).ID)
 
-// 	v := validator.New()
-// 	if data.ValidateCollectionUpdate(v, input.Title, input.Description); !v.Valid() {
-// 		app.failedValidationResponse(w, r, v.Errors)
-// 		return
-// 	}
+	if err != nil {
+		switch {
+		case errors.Is(err , data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
 
-// 	// TODO: verify ownership — contextGetUser(r).ID == collection.UserID
-// 	// TODO: apply non-nil fields to the fetched collection
-// 	// TODO: app.models.Collections.Update(collection) — with optimistic locking
-// 	// TODO: on ErrEditConflict → editConflictResponse
-// 	// TODO: return 200 with updated collection JSON
+	var input struct {
+		Title       *string `json:"title"`
+		Description *string `json:"description"`
+		Max_sources *int    `json:"max_sources"`
+	}
 
-// }
+	err = app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	if input.Title != nil {
+		collection.Title = *input.Title
+	}
+
+	if input.Description != nil {
+		collection.Description = *input.Description
+	}
+
+	if input.Max_sources != nil {
+		collection.Max_Sources = *input.Max_sources
+	}
+
+	v := validator.New()
+	if data.ValidateCollection(v, collection); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	err = app.models.Collections.Update(collection)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrEditConflict):
+				app.editConflictResponse(w, r)
+		case errors.Is(err, data.ErrDuplicateRecord):
+				app.duplicateResourceResponse(w, r, "collection with this title already exists")
+		default:
+				app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"collection": collection}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+
+}
 
 // deleteCollectionHandler handles DELETE /v1/collections/:id
 func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.Request) {
@@ -141,10 +176,21 @@ func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// TODO: verify ownership — fetch collection, check contextGetUser(r).ID == collection.UserID
-	// TODO: app.models.Collections.Delete(id)
-	// TODO: on ErrRecordNotFound → notFoundResponse
-	_ = id
+	err = app.models.Collections.Delete(id , app.GetUserFromSubsequentRequestContext(r).ID)
+	if err != nil {
+		switch {
+		case errors.Is(err , data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"message": "collection successfully deleted"}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
 
 }
 
