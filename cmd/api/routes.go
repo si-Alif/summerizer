@@ -23,6 +23,7 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodDelete, "/v1/collections/:id", app.deleteCollectionHandler)
 
 	// source routes
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/sources", app.createSourceHandler)
 	// router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
 
 	return router

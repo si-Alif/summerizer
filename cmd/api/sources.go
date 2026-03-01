@@ -1,149 +1,98 @@
 package main
 
-// import (
-// 	"net/http"
-// 	"time"
+import (
+	"errors"
+	"fmt"
+	"net/http"
 
-// 	"github.com/si-Alif/summerizer/internal/data"
-// 	"github.com/si-Alif/summerizer/internal/validator"
-// )
+	"github.com/si-Alif/summerizer/internal/data"
+	"github.com/si-Alif/summerizer/internal/validator"
+)
 
-// func (app *application) showSourceHandler(w http.ResponseWriter, r *http.Request) {
-// 	id, err := app.readIDParam(r)
-// 	if err != nil {
-// 		app.notFoundResponse(w, r)
-// 		return
-// 	}
+func (app *application) createSourceHandler(w http.ResponseWriter, r *http.Request) {
 
-// 	// TODO: replace with app.models.Sources.Get(id) once DB is wired
-// 	// TODO: verify that source.CollectionID belongs to a collection owned by contextGetUser(r)
-// 	//   → notFoundResponse if not owner
-// 	// TODO: if source.Status == "ingesting" or "pending", consider resourceNotReadyResponse
+	cid , err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
 
-// 	step := "fetch"
-// 	errMsg := ""
 
-// 	source := data.Source{
-// 		ID:           id,
-// 		CollectionID: 1,
-// 		SourceType:   "web",
-// 		URL:          "https://example.com/article",
-// 		Title:        "Example Article",
-// 		Status:       "ingesting",
-// 		CurrentStep:  &step,
-// 		StepError:    &errMsg,
-// 		RetryCount:   0,
-// 		NextRetryAt:  nil,
-// 		Metadata:     data.JsonMap{},
-// 		CreatedAt:    time.Now(),
-// 		UpdatedAt:    time.Now(),
-// 		Version:      1,
-// 	}
+	var input struct {
+		URL string `json:"url"`
+		Title string `json:"title"`
+	}
 
-// 	err = app.writeJSON(w, http.StatusOK, envelop{"source": source}, nil)
-// 	if err != nil {
-// 		app.serverErrorResponse(w, r, err)
-// 	}
-// }
+	err = app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
 
-// // todo : implement createSourceHandler with input validation and error handling
-// func (app *application) createSourceHandler(w http.ResponseWriter, r *http.Request) {
-// 	// The collection ID comes from the route: /v1/collections/:id/sources
-// 	collectionID, err := app.readIDParam(r)
-// 	if err != nil {
-// 		app.notFoundResponse(w, r)
-// 		return
-// 	}
+	srcType := validator.DetectSourceType(input.URL)
 
-// 	var input struct {
-// 		URL string `json:"url"`
-// 	}
+	if  srcType== validator.InvalidSourceType {
+		app.badRequestResponse(w, r, data.ErrInvalidSourceURL)
+		return
+	}
 
-// 	err = app.readJSON(w, r, &input)
-// 	if err != nil {
-// 		app.badRequestResponse(w, r, err)
-// 		return
-// 	}
+	user_id := app.GetUserFromSubsequentRequestContext(r).ID
 
-// 	// Auto-detect source type from the URL pattern
-// 	sourceType := validator.DetectSourceType(input.URL)
+	collection , err := app.models.Collections.GetByID(cid , user_id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
 
-// 	source := &data.Source{
-// 		CollectionID: collectionID,
-// 		URL:          input.URL,
-// 		SourceType:   sourceType,
-// 		Status:       "pending",
-// 	}
+	count , err := app.models.Sources.CountByCollection(cid)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
 
-// 	v := validator.New()
-// 	if data.ValidateSource(v, source); !v.Valid() {
-// 		app.failedValidationResponse(w, r, v.Errors)
-// 		return
-// 	}
+	if count >= collection.Max_Sources {
+		app.errorResponse(w , r ,
+			http.StatusConflict ,
+			fmt.Sprintf("collection already has maximum number of sources (%d)", collection.Max_Sources),
+		)
+		return
+	}
 
-// 	// TODO: verify collection ownership — contextGetUser(r).ID owns collectionID
-// 	// TODO: check source count per collection (max 50) before insert
-// 	// TODO: check for duplicate URL within same collection
-// 	// TODO: app.models.Sources.Insert(source)
-// 	// TODO: return 202 Accepted with source JSON
+	source := &data.Source{
+		CollectionID: cid,
+		URL: input.URL,
+		Title: input.Title,
+		SourceType : srcType,
+		Metadata: make(data.JsonMap),
+	}
 
-// }
+	v := validator.New()
+	if data.ValidateSource(v, source); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
 
-// // listSourcesHandler handles GET /v1/collections/:id/sources?page=1&page_size=20&status=completed
-// func (app *application) listSourcesHandler(w http.ResponseWriter, r *http.Request) {
-// 	collectionID, err := app.readIDParam(r)
-// 	if err != nil {
-// 		app.notFoundResponse(w, r)
-// 		return
-// 	}
+	err = app.models.Sources.Insert(source)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrDuplicateRecord) :
+			app.errorResponse(w, r, http.StatusConflict, "source already exists in collection")
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
 
-// 	v := validator.New()
+	headers := make(http.Header)
+	headers.Set("Location", fmt.Sprintf("/v1/sources/%d", source.ID))
 
-// 	// Parse pagination
-// 	page := app.readIntQueryParameter(r, "page", 1, v)
-// 	pageSize := app.readIntQueryParameter(r, "page_size", 20, v)
-
-// 	filters := data.Filters{
-// 		Page:     page,
-// 		PageSize: pageSize,
-// 	}
-
-// 	data.ValidateFilters(v, filters)
-
-// 	// Optional status filter — if provided, must be a valid status
-// 	status := app.readStringQueryParameter(r, "status", "")
-// 	if status != "" {
-// 		v.Check(
-// 			validator.PermittedValue(status, data.PermittedStatuses...),
-// 			"status",
-// 			"must be one of: pending, ingesting, completed, failed, stale",
-// 		)
-// 	}
-
-// 	if !v.Valid() {
-// 		app.failedValidationResponse(w, r, v.Errors)
-// 		return
-// 	}
-
-// 	// TODO: verify collection ownership — contextGetUser(r).ID owns collectionID
-// 	// TODO: sources, metadata, err := app.models.Sources.ListByCollection(collectionID, filters, status)
-// 	// TODO: return 200 with { metadata, sources }
-// 	_ = collectionID
-// 	_ = status
-
-// }
-
-// // deleteSourceHandler handles DELETE /v1/sources/:id
-// func (app *application) deleteSourceHandler(w http.ResponseWriter, r *http.Request) {
-// 	id, err := app.readIDParam(r)
-// 	if err != nil {
-// 		app.notFoundResponse(w, r)
-// 		return
-// 	}
-
-// 	// TODO: fetch source, verify ownership via collection → contextGetUser(r).ID
-// 	// TODO: app.models.Sources.Delete(id)
-// 	// TODO: on ErrRecordNotFound → notFoundResponse
-// 	_ = id
-
-// }
+	err = app.writeJSON(w, http.StatusCreated, envelop{"source": source}, headers)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}

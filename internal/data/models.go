@@ -10,6 +10,7 @@ var (
 	ErrRecordNotFound  = errors.New("record not found")
 	ErrEditConflict    = errors.New("edit conflict")
 	ErrDuplicateRecord = errors.New("duplicate record")
+	ErrInvalidSourceURL = errors.New("invalid source URL")
 )
 
 

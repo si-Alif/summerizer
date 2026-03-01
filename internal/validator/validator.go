@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+
 )
 
 var (
@@ -20,6 +22,14 @@ var (
 		- If it's just a boolean check on a value, it's a standalone function that gets passed into v.Check().
 
 */
+
+
+const (
+	SourceTypeYouTube = "youtube"
+	SourceTypePDF     = "pdf"
+	SourceTypeWeb     = "web"
+	InvalidSourceType   = ""
+)
 
 type Validator struct {
 	Errors map[string]string
@@ -90,14 +100,19 @@ func Unique[T comparable](vals []T) bool {
 }
 
 func DetectSourceType(rawURL string) string {
+
+	if strings.TrimSpace(rawURL) == "" {
+		return InvalidSourceType
+	}
+
 	if YouTubeRX.MatchString(rawURL) {
-		return "youtube"
+		return SourceTypeYouTube
 	}
 
 	u, err := url.Parse(rawURL)
 	if err == nil && strings.HasSuffix(strings.ToLower(u.Path), ".pdf") {
-		return "pdf"
+		return SourceTypePDF
 	}
 
-	return "web"
+	return SourceTypeWeb
 }
