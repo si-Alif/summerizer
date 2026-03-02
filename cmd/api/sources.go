@@ -96,3 +96,99 @@ func (app *application) createSourceHandler(w http.ResponseWriter, r *http.Reque
 		app.serverErrorResponse(w, r, err)
 	}
 }
+
+func (app *application) listSourceHandler(w http.ResponseWriter, r *http.Request) {
+	cid , err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	var input struct {
+		Title string
+		data.Filters
+		Status string
+	}
+	v := validator.New()
+
+	qrs := r.URL.Query()
+
+	input.Title = app.readString(qrs , "title" , "")
+	input.Status = app.readString(qrs , "status" , "")
+	input.Filters.Page = app.readInt(qrs , "page" , 1 , v)
+	input.Filters.PageSize = app.readInt(qrs , "page_size" , 20 , v)
+	input.Filters.Sort = app.readString(qrs , "sort" , "id")
+	input.Filters.SortSafeList = []string{"id", "created_at","status",  "-id","-status" , "-created_at"}
+
+	user_id := app.GetUserFromSubsequentRequestContext(r).ID
+
+	if data.ValidateFilters(v, input.Filters) ; !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	sources, metadata, err := app.models.Sources.GetAllByCollection(cid , user_id , input.Status, input.Filters)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"sources": sources, "metadata": metadata}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+
+}
+
+func (app *application) showSourceHandler(w http.ResponseWriter, r *http.Request) {
+	sid , err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	user_id := app.GetUserFromSubsequentRequestContext(r).ID
+
+	source, err := app.models.Sources.GetByID(sid , user_id)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"source": source}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) deleteSourceHandler(w http.ResponseWriter, r *http.Request) {
+	sid , err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	user_id := app.GetUserFromSubsequentRequestContext(r).ID
+
+	err = app.models.Sources.Delete(sid , user_id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"message": "source successfully deleted"}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}

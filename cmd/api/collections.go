@@ -31,13 +31,12 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 	// TODO: replace with app.models.Sources.GetStatusSummary(collection.ID)
 	// Source status summary gives the user a quick overview of processing state
 	// e.g. { "pending": 2, "ingesting": 1, "completed": 5, "failed": 0 }
-	sourceStatusSummary := map[string]int{
-		"pending":   0,
-		"ingesting": 0,
-		"completed": 0,
-		"failed":    0,
-	}
+	sourceStatusSummary , err := app.models.Sources.GetStatusSummary(collection.ID)
 
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
 
 	err = app.writeJSON(w, http.StatusOK, envelop{
 		"collection":     collection,

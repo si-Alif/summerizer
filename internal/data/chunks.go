@@ -15,7 +15,7 @@ type Chunk struct {
 	Content    string    `json:"content"`
 	TokenCount int       `json:"token_count"`
 	Embedding  []float32 `json:"-"`        // never returned in API responses
-	Metadata   JsonMap   `json:"metadata"` 
+	Metadata   JsonMap   `json:"metadata"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 

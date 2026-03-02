@@ -175,8 +175,8 @@ func (m SourceModel) GetByID(id int64, userID int64) (*Source, error) {
 func (m SourceModel) GetAllByCollection(collectionID int64, userID int64, status string, filters Filters) ([]*Source, Metadata, error) {
 	query := fmt.Sprintf(`
 	SELECT count(*) OVER(), s.id, s.collection_id, s.source_type, s.url, s.title, s.status,
-			 s.current_step, s.step_error, s.retry_count, s.next_retry_at,
-			 s.metadata, s.created_at, s.updated_at, s.version
+			  s.current_step, s.step_error, s.retry_count, s.next_retry_at,
+			  s.metadata, s.created_at, s.updated_at, s.version
 	FROM sources s
 	JOIN collections c ON s.collection_id = c.id
 	WHERE s.collection_id = $1 AND c.user_id = $2

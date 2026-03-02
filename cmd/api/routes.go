@@ -24,7 +24,9 @@ func (app *application) routes() http.Handler {
 
 	// source routes
 	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/sources", app.createSourceHandler)
-	// router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
+	router.HandlerFunc(http.MethodGet, "/v1/collections/:id/sources", app.listSourceHandler)
+	router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
+	router.HandlerFunc(http.MethodDelete, "/v1/sources/:id", app.deleteSourceHandler)
 
 	return router
 }
