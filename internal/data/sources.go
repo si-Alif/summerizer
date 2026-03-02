@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -30,6 +31,29 @@ type Source struct {
 
 // JsonMap is a type alias for JSONB column data
 type JsonMap map[string]any
+
+func (j *JsonMap) Scan(value any) error {
+	if value == nil {
+		*j = make(JsonMap)
+		return nil
+	}
+
+	valueBytes, ok := value.([]byte)
+
+	if !ok {
+		return fmt.Errorf("JsonMap.Scan expected []byte, got %T", value)
+	}
+
+	result := make(JsonMap)
+	err := json.Unmarshal(valueBytes, &result)
+	if err != nil {
+		return fmt.Errorf("JsonMap.Scan error unmarshaling JSON: %w", err)
+	}
+
+	*j = result
+
+	return nil
+}
 
 
 var (
