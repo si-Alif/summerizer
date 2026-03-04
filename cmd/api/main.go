@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/si-Alif/summerizer/internal/data"
+	"github.com/si-Alif/summerizer/internal/worker"
 )
 
 var (
@@ -25,12 +26,17 @@ type config struct {
 		maxIdleConns int
 		maxIdleTime  time.Duration
 	}
+	worker_pool struct{
+		worker_count int
+		poll_interval time.Duration
+	}
 }
 
 type application struct {
 	config config
 	logger *slog.Logger
 	models data.Models
+	workers *worker.Pool
 }
 
 func main() {
@@ -46,6 +52,10 @@ func main() {
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max idle time for a connection")
 
+	// worker pool settings
+	flag.IntVar(&cfg.worker_pool.worker_count, "worker-count", 3, "Number of worker goroutines")
+	flag.DurationVar(&cfg.worker_pool.poll_interval, "poll-interval", 5*time.Second, "Interval between polls for pending sources")
+
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -60,11 +70,18 @@ func main() {
 
 	logger.Info("database connection pool established")
 
+	models := data.NewModels(db)
+
+	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger)
+
 	app := application{
 		config: cfg,
 		logger: logger,
-		models: data.NewModels(db),
+		models: models,
+		workers: worker_pool,
 	}
+
+	app.workers.Start(context.Background())
 
 	err = app.serve()
 
@@ -73,6 +90,9 @@ func main() {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
+
+	app.workers.Shutdown()
+
 }
 
 func openDB(cfg config) (*sql.DB, error) {
