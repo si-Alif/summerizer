@@ -1,4 +1,4 @@
-package main
+package fetcher
 
 import (
 	"bytes"
@@ -98,28 +98,3 @@ func (f *Fetcher) Fetch(rawURL string) (*RawContent, error) {
 
 }
 
-func main(){
-	f := NewFetcher()
-
-	urls := []string{
-		"https://gobyexample.com/http-clients",
-		"https://pkg.go.dev/io#LimitReader",
-	}
-
-	for _,  u := range urls {
-
-		content, err := f.Fetch(u)
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-
-		fmt.Printf("Title : %s\n" , content.Title)
-		fmt.Printf("Text Content : %s\n" , content.TextContent)
-		fmt.Printf("HTML Content : %s\n" , content.HTMLContent)
-		fmt.Printf("URL : %s\n" , content.URL)
-		fmt.Println("--------------------------------------------------")
-
-
-	}
-}
