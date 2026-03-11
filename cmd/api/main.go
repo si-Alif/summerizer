@@ -10,6 +10,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/si-Alif/summerizer/internal/data"
+	"github.com/si-Alif/summerizer/internal/ingestion"
+	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
+	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 	"github.com/si-Alif/summerizer/internal/worker"
 )
 
@@ -72,7 +75,17 @@ func main() {
 
 	models := data.NewModels(db)
 
-	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger)
+	webFetcher := fetcher.NewFetcher()
+
+	textChunker , err := chunker.New(400 , 1)
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+
+	pipeline := ingestion.NewPipeline(models , logger , webFetcher , textChunker)
+
+	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
 
 	app := application{
 		config: cfg,

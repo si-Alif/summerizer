@@ -448,28 +448,47 @@ func (m SourceModel) ClaimPending(limit int) ([]*Source, error) {
 }
 
 
-func (m SourceModel) UpdateStatus(id int64, status string, currentStep *string, stepError *string, retryCount int, nextRetryAt *time.Time) error {
+func (m SourceModel) UpdateStatus(id int64, status string, currentStep string) error {
 
-    query := `
-    UPDATE sources
-    SET status = $2,
-            current_step = $3,
-            step_error = $4,
-            retry_count = $5,
-            next_retry_at = $6,
-            version = version + 1
-    WHERE id = $1`
+	query := `
+	UPDATE sources
+	SET
+		status = $1,
+		current_step = $2,
+		version = version + 1
+	WHERE id = $3`
 
-    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-    args := []any{id, status, currentStep, stepError, retryCount, nextRetryAt}
-    _, err := m.DB.ExecContext(ctx, query, args...)
+	args := []any{status, currentStep, id}
+	_, err := m.DB.ExecContext(ctx, query, args...)
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return  err
+	}
 
-    return nil
+	return nil
 }
 
+
+func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
+	query := `
+	UPDATE sources
+	SET
+		status = 'failed',
+		current_step = $1,
+		step_error = $2,
+		retry_count = retry_count + 1,
+		next_retry_at = now() + (interval '1 minute' * power(2, retry_count)),
+		version = version + 1
+	WHERE id = $3`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	args := []any{step, errMsg, id}
+	_, err := m.DB.ExecContext(ctx, query, args...)
+
+	return  err
+}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/si-Alif/summerizer/internal/data"
+	"github.com/si-Alif/summerizer/internal/ingestion"
 )
 
 type Pool struct {
@@ -16,6 +17,7 @@ type Pool struct {
 	logger       *slog.Logger
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	pipeline 		*ingestion.Pipeline
 }
 
 func NewPool(
@@ -23,12 +25,14 @@ func NewPool(
 	workerCount int,
 	pollInterval time.Duration,
 	logger *slog.Logger,
+	pipeline *ingestion.Pipeline,
 ) *Pool {
 	return &Pool{
 		workerCount:  workerCount,
 		pollInterval: pollInterval,
 		models:       data,
 		logger:       logger,
+		pipeline: pipeline,
 	}
 }
 
@@ -89,17 +93,7 @@ func (p *Pool) process(ctx context.Context , worker_id int , source *data.Source
 		"type", source.SourceType,
 	)
 
-	// TODO : build pipeline . For now , just simulate work via sleeping
-	time.Sleep(3 * time.Second)
-
-	err := p.models.Sources.UpdateStatus(
-		source.ID ,
-		"completed",
-		nil,
-		nil ,
-		source.RetryCount,
-		nil,
-	)
+	err := p.pipeline.ProcessSource(ctx , source)
 
 	if err != nil {
 		p.logger.Error("failed to update source status",

@@ -6,6 +6,8 @@ import (
 	"golang.org/x/net/html"
 )
 
+const MinContentLength = 30
+
 // ContentBlock represents individual section to be chunked
 type ContentBlock struct {
 	SectionTitle string
@@ -23,12 +25,25 @@ var headingTags = map[string]bool{
 
 var contentTags = map[string]bool{
 	"p": true,
-	"li": true,
 	"blockquote": true,
+	"code": true,
+	"pre": true,
+	// "li": true, removed <li> extraction upon facing issues with some websites where each line was wrapped in <li> tags which resulted in a large number of blocks and thus causing issues in chunking and embedding generation
 	"td": true,
 	"th": true,
 	"dd" : true,
 	"dt" : true,
+}
+
+var IgnoredTags = map[string]bool{
+	"script": true,
+	"nav": true,
+	"menu": true,
+	"sidebar": true,
+	"toc": true,
+	"breadcrumb": true,
+	"footer": true,
+	"header": true,
 }
 
 func ExtractBlocks(cleanedHTML string) ([]ContentBlock, error) {
@@ -41,14 +56,19 @@ func ExtractBlocks(cleanedHTML string) ([]ContentBlock, error) {
 	}
 
 	var blocks []ContentBlock
-	var currentSection string
-
+	currentSection := ""
+	seen := make(map[string]bool) // to track seen section titles and avoid duplicates
 
 	var traverse func(*html.Node)
 	traverse = func(n *html.Node) {
 		if n.Type == html.ElementNode{
+			tag := n.Data
+			if IgnoredTags[tag] {
+				return // skip this node and its children
+			}
+
 			// Note : n.data is tag name if it's element node else it's text content
-			if headingTags[n.Data] { // checking if it's heading tag(element node)
+			if headingTags[tag] { // checking if it's heading tag(element node)
 
 				text := extractText(n) // text is raw title by now
 				text = strings.TrimSpace(text)
@@ -62,15 +82,29 @@ func ExtractBlocks(cleanedHTML string) ([]ContentBlock, error) {
 				return
 			}
 
-			if contentTags[n.Data] { // checking if it's content tag
+			if contentTags[tag] { // checking if it's content tag
 				text := extractText(n)
 				text = strings.TrimSpace(text)
-				if text != "" {
-					blocks = append(blocks, ContentBlock{
-						SectionTitle: currentSection,
-						Text: text,
-					})
+				if len(text) < MinContentLength {
+					// if the extracted text is too short , then it's likely not useful content and we can skip it
+					for c := n.NextSibling ; c != nil ; c = c.NextSibling {
+						traverse(c)
+					}
+					return
 				}
+
+				if seen[text]{
+					for c := n.NextSibling ; c != nil ; c = c.NextSibling {
+						traverse(c)
+					}
+					return
+				}
+				seen[text] = true
+
+				blocks = append(blocks , ContentBlock{
+					SectionTitle: currentSection,
+					Text: text,
+				})
 
 				for c := n.NextSibling ; c != nil ; c = c.NextSibling {
 					traverse(c)
