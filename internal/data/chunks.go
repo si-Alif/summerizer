@@ -12,6 +12,9 @@ import (
 	"github.com/si-Alif/summerizer/internal/validator"
 )
 
+// Batch size for bulk inserting chunks to prevent hitting PostgreSQL's parameter limit (65535)
+const ChunkBulkInsertBatchSize = 500
+
 type Chunk struct {
 	ID           int64  `json:"id"`
 	SourceID      int64  `json:"source_id"`
@@ -51,6 +54,23 @@ type ChunkModel struct {
 }
 
 func (m ChunkModel) BulkInsert(chunks []*Chunk) error {
+	len := len(chunks)
+	for i := 0; i < len; i += ChunkBulkInsertBatchSize {
+		end := i + ChunkBulkInsertBatchSize
+		if end > len {
+			end = len
+		}
+
+		err := m.BulkInsertBatch(chunks[i:end])
+		if err != nil {
+			return fmt.Errorf("bulk insert chunks batch (start: %d, end: %d): %w", i, end, err)
+		}
+	}
+
+	return nil
+}
+
+func (m ChunkModel) BulkInsertBatch(chunks []*Chunk) error {
 	query := `INSERT INTO chunks (source_id , chunk_index , content , token_count , metadata) VALUES `
 
 	chunks_len := len(chunks)
@@ -92,6 +112,7 @@ func (m ChunkModel) BulkInsert(chunks []*Chunk) error {
 
 	return rows.Err()
 }
+
 
 func (m ChunkModel) DeleteBySourceID(sourceID int64) error {
 	query := `DELETE FROM chunks WHERE source_id = $1`
