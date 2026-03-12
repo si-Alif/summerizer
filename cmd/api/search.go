@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/si-Alif/summerizer/internal/data"
-	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/validator"
 )
 
@@ -53,21 +50,14 @@ func (app *application) searchCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	embedding, err := embedQuery(input.Query, app.embedder)
-
-	if err != nil {
-		app.serverErrorResponse(w, r, err)
-		return
-	}
-
-	results, err := app.models.Chunks.SearchByVector(collection.ID, embedding, input.TopK )
-
+	results, err := app.service.SearchService(r.Context(), collection.ID, input.Query, input.TopK)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
 	}
 
 	err = app.writeJSON(w, http.StatusOK, envelop{"results": results}, nil)
+
 
 }
 
@@ -106,19 +96,4 @@ func (app *application) askCollectionHandler(w http.ResponseWriter, r *http.Requ
 
 }
 
-
-func embedQuery(query string, embedder *embedder.Embedder) ([]float32, error) {
-	ctx , cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	text := make([]string , 1)
-	text[0] = query
-
-	res , err := embedder.GetEmbeddings(ctx , text)
-	if err != nil {
-		return nil, err
-	}
-
-	return res[0], nil
-}
 

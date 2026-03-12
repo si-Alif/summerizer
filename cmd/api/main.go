@@ -14,6 +14,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
 	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
+	"github.com/si-Alif/summerizer/internal/search"
 	"github.com/si-Alif/summerizer/internal/worker"
 )
 
@@ -43,7 +44,7 @@ type application struct {
 	logger *slog.Logger
 	models data.Models
 	workers *worker.Pool
-	embedder *embedder.Embedder
+	service *search.Service
 }
 
 func main() {
@@ -93,12 +94,14 @@ func main() {
 
 	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
 
+	searchService := search.NewService(embedder , models )
+
 	app := application{
 		config: cfg,
 		logger: logger,
 		models: models,
 		workers: worker_pool,
-		embedder: embedder,
+		service: searchService,
 	}
 
 	app.workers.Start(context.Background())
