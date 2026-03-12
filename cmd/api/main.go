@@ -12,6 +12,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion"
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
+	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 	"github.com/si-Alif/summerizer/internal/worker"
 )
@@ -56,7 +57,7 @@ func main() {
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max idle time for a connection")
 
 	// worker pool settings
-	flag.IntVar(&cfg.worker_pool.worker_count, "worker-count", 3, "Number of worker goroutines")
+	flag.IntVar(&cfg.worker_pool.worker_count, "worker-count", 10, "Number of worker goroutines")
 	flag.DurationVar(&cfg.worker_pool.poll_interval, "poll-interval", 5*time.Second, "Interval between polls for pending sources")
 
 	flag.Parse()
@@ -83,7 +84,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	pipeline := ingestion.NewPipeline(models , logger , webFetcher , textChunker)
+	embedder := embedder.NewEmbedder("" , "")
+
+	pipeline := ingestion.NewPipeline(models , logger , webFetcher , textChunker , embedder)
 
 	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
 	"github.com/si-Alif/summerizer/internal/ingestion/cleaner"
+	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 )
 
@@ -17,6 +18,7 @@ type Pipeline struct {
 	chunker *chunker.Chunker
 	models data.Models
 	logger *slog.Logger
+	embedder *embedder.Embedder
 }
 
 func NewPipeline(
@@ -24,12 +26,14 @@ func NewPipeline(
 	logger *slog.Logger,
 	f *fetcher.Fetcher,
 	c *chunker.Chunker,
+	e *embedder.Embedder,
 ) *Pipeline {
 	return &Pipeline{
 		fetcher: f,
 		chunker: c,
 		models: models,
 		logger: logger,
+		embedder: e,
 	}
 }
 
@@ -166,15 +170,37 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 
 	log.Info("pipeline: stored chunks successfully" , "chunks_stored" , len(chunks))
 
-	// --- Step 5: EMBED --- (skipped for now — added when embedding layer is built)
-	// When implemented:
-  //   - embed each chunk via Ollama/OpenAI
-  //   - call BulkUpdateEmbeddings()
+	// Step 5: EMBED
+	contents := make([]string , len(dataChunks))
 
-	err = p.models.Sources.UpdateStatus(source.ID , "completed" , "")
+	for i , chunk := range dataChunks {
+		contents[i] = chunk.Content
+	}
+
+	embeddings , err := p.embedder.GetEmbeddings(ctx , contents)
 
 	if err != nil {
-		return fmt.Errorf("update final status to completed %w" , err)
+    p.failSource(source.ID, "embed", err)
+    return fmt.Errorf("embedding failed: %w", err)
+	}
+
+	chunkIDs := make([]int64 , len(dataChunks))
+
+	for i , chunk := range dataChunks {
+		chunkIDs[i] = chunk.ID
+	}
+
+	err = p.models.Chunks.BulkUpdateEmbedding(chunkIDs , embeddings)
+
+	if err != nil {
+		p.failSource(source.ID, "embed", err)
+		return fmt.Errorf("updating chunk embeddings: %w", err)
+	}
+
+	err = p.models.Sources.UpdateStatus(source.ID , "completed" , "embed")
+
+	if err != nil {
+		return fmt.Errorf("update step to completed %w" , err)
 	}
 
 	log.Info("pipeline: completed",
