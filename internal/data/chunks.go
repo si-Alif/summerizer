@@ -184,7 +184,7 @@ func (m ChunkModel) SearchByVector(collectionID int64, queryVector []float32, li
 		FROM chunks c
 		JOIN sources s ON c.source_id = s.id
 		WHERE s.collection_id = $2
-			AND s.status = "completed"
+			AND s.status = 'completed'
 			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector ASC
 		LIMIT $3`
