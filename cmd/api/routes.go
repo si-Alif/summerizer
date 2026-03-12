@@ -21,6 +21,8 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodGet, "/v1/collections/:id", app.showCollectionHandler)
 	router.HandlerFunc(http.MethodPatch, "/v1/collections/:id", app.updateCollectionHandler)
 	router.HandlerFunc(http.MethodDelete, "/v1/collections/:id", app.deleteCollectionHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/search", app.searchCollectionHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/ask", app.askCollectionHandler)
 
 	// source routes
 	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/sources", app.createSourceHandler)

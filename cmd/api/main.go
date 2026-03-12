@@ -36,11 +36,14 @@ type config struct {
 	}
 }
 
+
+
 type application struct {
 	config config
 	logger *slog.Logger
 	models data.Models
 	workers *worker.Pool
+	embedder *embedder.Embedder
 }
 
 func main() {
@@ -95,6 +98,7 @@ func main() {
 		logger: logger,
 		models: models,
 		workers: worker_pool,
+		embedder: embedder,
 	}
 
 	app.workers.Start(context.Background())

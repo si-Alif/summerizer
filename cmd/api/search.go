@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/si-Alif/summerizer/internal/data"
+	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/validator"
 )
 
@@ -11,6 +15,9 @@ import (
 // Performs vector similarity search within a collection's chunks.
 func (app *application) searchCollectionHandler(w http.ResponseWriter, r *http.Request) {
 	collectionID, err := app.readIDParam(r)
+
+	userID := app.GetUserFromSubsequentRequestContext(r).ID
+
 	if err != nil {
 		app.notFoundResponse(w, r)
 		return
@@ -35,11 +42,32 @@ func (app *application) searchCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// TODO: verify collection ownership — contextGetUser(r).ID owns collectionID
-	// TODO: embed the query via searchService.Embed(ctx, input.Query)
-	// TODO: call chunks.SearchByEmbedding(ctx, collectionID, embedding, input.TopK)
-	// TODO: return results as JSON
-	_ = collectionID
+	collection, err := app.models.Collections.GetByID(collectionID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	embedding, err := embedQuery(input.Query, app.embedder)
+
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	results, err := app.models.Chunks.SearchByVector(collection.ID, embedding, input.TopK )
+
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelop{"results": results}, nil)
 
 }
 
@@ -76,5 +104,21 @@ func (app *application) askCollectionHandler(w http.ResponseWriter, r *http.Requ
 	// TODO: return { answer, sources } as JSON
 	_ = collectionID
 
+}
+
+
+func embedQuery(query string, embedder *embedder.Embedder) ([]float32, error) {
+	ctx , cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	text := make([]string , 1)
+	text[0] = query
+
+	res , err := embedder.GetEmbeddings(ctx , text)
+	if err != nil {
+		return nil, err
+	}
+
+	return res[0], nil
 }
 
