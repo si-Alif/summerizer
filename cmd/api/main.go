@@ -14,6 +14,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
 	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
+	"github.com/si-Alif/summerizer/internal/llm/ollama"
 	"github.com/si-Alif/summerizer/internal/search"
 	"github.com/si-Alif/summerizer/internal/worker"
 )
@@ -94,7 +95,9 @@ func main() {
 
 	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
 
-	searchService := search.NewService(embedder , models )
+	llmClient := ollama.NewOllamaModel("" , "")
+
+	searchService := search.NewService(embedder , models , llmClient)
 
 	app := application{
 		config: cfg,

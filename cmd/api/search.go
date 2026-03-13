@@ -64,36 +64,53 @@ func (app *application) searchCollectionHandler(w http.ResponseWriter, r *http.R
 // askCollectionHandler handles POST /v1/collections/:id/ask
 // Full RAG flow: embed question → retrieve chunks → LLM answer.
 func (app *application) askCollectionHandler(w http.ResponseWriter, r *http.Request) {
-	collectionID, err := app.readIDParam(r)
-	if err != nil {
-		app.notFoundResponse(w, r)
-		return
-	}
+    collectionID, err := app.readIDParam(r)
+    if err != nil {
+        app.notFoundResponse(w, r)
+        return
+    }
 
-	var input data.AskInput
+    userID := app.GetUserFromSubsequentRequestContext(r).ID
 
-	err = app.readJSON(w, r, &input)
-	if err != nil {
-		app.badRequestResponse(w, r, err)
-		return
-	}
+    var input data.AskInput
+    err = app.readJSON(w, r, &input)
+    if err != nil {
+        app.badRequestResponse(w, r, err)
+        return
+    }
 
-	// Default top_k if not provided — 5 chunks is a reasonable LLM context size
-	if input.TopK == 0 {
-		input.TopK = 5
-	}
+    if input.TopK == 0 {
+        input.TopK = 5
+    }
 
-	v := validator.New()
-	if data.ValidateAskInput(v, &input); !v.Valid() {
-		app.failedValidationResponse(w, r, v.Errors)
-		return
-	}
+    v := validator.New()
+    if data.ValidateAskInput(v, &input); !v.Valid() {
+        app.failedValidationResponse(w, r, v.Errors)
+        return
+    }
 
-	// TODO: verify collection ownership — contextGetUser(r).ID owns collectionID
-	// TODO: call searchService.Ask(ctx, collectionID, input.Question, input.TopK)
-	// TODO: return { answer, sources } as JSON
-	_ = collectionID
+    collection, err := app.models.Collections.GetByID(collectionID, userID)
+    if err != nil {
+        switch {
+        case errors.Is(err, data.ErrRecordNotFound):
+            app.notFoundResponse(w, r)
+        default:
+            app.serverErrorResponse(w, r, err)
+        }
+        return
+    }
 
+    result, err := app.service.AskService(r.Context(), collection.ID, input.Question, input.TopK)
+    if err != nil {
+        app.serverErrorResponse(w, r, err)
+        return
+    }
+
+    err = app.writeJSON(w, http.StatusOK, envelop{
+        "answer":  result.Answer,
+        "sources": result.Sources,
+    }, nil)
+    if err != nil {
+        app.serverErrorResponse(w, r, err)
+    }
 }
-
-

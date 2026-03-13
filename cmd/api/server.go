@@ -18,7 +18,7 @@ func (app *application) serve() error {
 		Handler:      app.routes(),
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		// WriteTimeout: 10 * time.Second, // Add later when LLM generation is implemented and we have a better idea of how long it takes to generate a response
 		ErrorLog:     slog.NewLogLogger(app.logger.Handler(), slog.LevelError),
 	}
 
