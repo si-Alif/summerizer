@@ -19,6 +19,7 @@ type Models struct {
 	Sources     SourceModel
 	Users       UserModel
 	Chunks      ChunkModel
+	Tokens 			TokenModel
 }
 
 
@@ -28,5 +29,6 @@ func NewModels(db *sql.DB) Models {
 		Sources:     SourceModel{DB: db},
 		Users:       UserModel{DB: db},
 		Chunks:      ChunkModel{DB: db},
+		Tokens:        TokenModel{DB: db},
 	}
 }

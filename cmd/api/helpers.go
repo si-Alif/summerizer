@@ -150,3 +150,19 @@ func (app *application) readInt(vals url.Values , key string, defaultValue int ,
 	}
 	return i
 }
+
+func (app *application) SpawnBackgroundTask(fn func()) {
+
+	app.wg.Add(1)
+
+	go func(){
+		defer app.wg.Done()
+		defer func(){
+			if err := recover(); err != nil {
+				app.logger.Error("Background task panicked", "error", fmt.Sprintf("%v", err))
+			}
+		}()
+		fn()
+	}()
+	
+}

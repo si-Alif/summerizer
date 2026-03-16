@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/validator"
@@ -52,6 +53,32 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+
+	token , err := app.models.Tokens.New(user.ID , 24 * time.Hour , data.ScopeActivation)
+
+	templateData := struct {
+		User             *data.User
+		RegistrationDate string
+		CurrentYear      int
+		ActivationToken  string
+		UserID           int64
+	}{
+		User:             user,
+		RegistrationDate: user.CreatedAt.Format("January 2, 2006"),
+		CurrentYear:      time.Now().Year(),
+		ActivationToken:  token.Plaintext,
+		UserID:           user.ID,
+	}
+
+
+	app.SpawnBackgroundTask(
+		func() {
+			err := app.mailer.Send(input.Email , "user_welcome.tmpl.html" , templateData)
+			if err != nil {
+				app.logger.Error(err.Error())
+			}
+		},
+	)
 
 	err = app.writeJSON(w, http.StatusCreated, envelope{"user": user}, nil)
 	if err != nil {

@@ -25,7 +25,6 @@ func (app *application) serve() error {
 	// to handle shutdown signals gracefully, we create a channel to receive any errors that occur during the shutdown process
 	shutDownError := make(chan error)
 
-
 	// start a goroutine to check for catchable shutdown signal during the server's lifetime
 	go func() {
 		quit := make(chan os.Signal, 1)
@@ -37,7 +36,17 @@ func (app *application) serve() error {
 		ctx , cancel := context.WithTimeout(context.Background() , 30 *time.Second)
 		defer cancel()
 
-		shutDownError <- srv.Shutdown(ctx)
+		err := srv.Shutdown(ctx)
+
+		if err != nil {
+			shutDownError <- err
+			return
+		}
+
+		app.logger.Info("completing background tasks...")
+		app.wg.Wait()
+
+		shutDownError <- nil
 
 	}()
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"flag"
-
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -16,6 +16,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 	"github.com/si-Alif/summerizer/internal/llm/huggingface"
+	"github.com/si-Alif/summerizer/internal/mailer"
 
 	// "github.com/si-Alif/summerizer/internal/llm/ollama"
 	"github.com/si-Alif/summerizer/internal/search"
@@ -44,6 +45,13 @@ type config struct {
 		burst int
 		enabled bool
 	}
+	smtp struct{
+		host string
+		port int
+		username string
+		password string
+		sender string
+	}
 }
 
 
@@ -54,6 +62,8 @@ type application struct {
 	models data.Models
 	workers *worker.Pool
 	service *search.Service
+	mailer *mailer.Mailer
+	wg sync.WaitGroup
 }
 
 func main() {
@@ -78,6 +88,13 @@ func main() {
 	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter burst size")
 	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
 
+	// SMTP settings
+	flag.StringVar(&cfg.smtp.host, "smtp-host", "sandbox.smtp.mailtrap.io", "SMTP server host")
+	flag.IntVar(&cfg.smtp.port, "smtp-port", 2525, "SMTP server port")
+	flag.StringVar(&cfg.smtp.username, "smtp-username", "174e3c217f3901", "SMTP server username")
+	flag.StringVar(&cfg.smtp.password, "smtp-password", "7c72dadc7e8c16", "SMTP server password")
+	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "noreply@summerizer.com", "Email address of the sender")
+
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -94,6 +111,12 @@ func main() {
 
 	models := data.NewModels(db)
 
+	mailer , err := mailer.NewMailer(cfg.smtp.host , cfg.smtp.port , cfg.smtp.username , cfg.smtp.password , cfg.smtp.sender)
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+
 	webFetcher := fetcher.NewFetcher()
 
 	textChunker , err := chunker.New(400 , 1)
@@ -105,6 +128,8 @@ func main() {
 	embedder := embedder.NewEmbedder("" , "")
 
 	pipeline := ingestion.NewPipeline(models , logger , webFetcher , textChunker , embedder)
+
+
 
 	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
 
@@ -123,6 +148,7 @@ func main() {
 		models: models,
 		workers: worker_pool,
 		service: searchService,
+		mailer : mailer,
 	}
 
 	app.workers.Start(context.Background())

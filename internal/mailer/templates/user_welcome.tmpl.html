@@ -1,0 +1,237 @@
+{{define "subject"}}Welcome to summerizer!{{end}}
+
+{{define "plainBody"}}
+Hi there,
+
+Thanks for signing up for a summerizer account. We're excited to have you on board!
+
+ACCOUNT DETAILS
+===============
+Your user ID: {{.UserID}}
+
+ACTIVATE YOUR ACCOUNT
+=====================
+To activate your account, please send a PUT request to the following endpoint:
+
+Endpoint: PUT /v1/users/activated
+
+Request Body (JSON):
+{
+"token": "{{.ActivationToken}}"
+}
+
+IMPORTANT: This activation token will expire in a day and can only be used once.
+
+If you didn't create this account, please ignore this email or contact our support team.
+
+Thanks,
+The summerizer Team
+
+---
+Need help? Contact us at support@summerizer.example.com
+{{end}}
+
+{{define "htmlBody"}}
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Welcome to summerizer</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333333;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+
+    .email-container {
+      max-width: 600px;
+      margin: 20px auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .email-header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #ffffff;
+      padding: 30px 20px;
+      text-align: center;
+    }
+
+    .email-header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .email-body {
+      padding: 30px 30px 20px;
+    }
+
+    .email-body p {
+      margin: 0 0 15px;
+      color: #555555;
+    }
+
+    .info-box {
+      background-color: #f8f9fa;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+
+    .info-box strong {
+      color: #333333;
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .activation-section {
+      background-color: #f0f4ff;
+      border-radius: 6px;
+      padding: 20px;
+      margin: 25px 0;
+    }
+
+    .activation-section h2 {
+      margin: 0 0 15px;
+      color: #667eea;
+      font-size: 18px;
+    }
+
+    .code-block {
+      background-color: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      margin: 10px 0;
+    }
+
+    .endpoint {
+      color: #ce9178;
+      font-weight: 600;
+    }
+
+    .warning {
+      background-color: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 12px 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .warning strong {
+      color: #856404;
+    }
+
+    .email-footer {
+      background-color: #f8f9fa;
+      padding: 20px 30px;
+      text-align: center;
+      border-top: 1px solid #e9ecef;
+    }
+
+    .email-footer p {
+      margin: 5px 0;
+      font-size: 13px;
+      color: #6c757d;
+    }
+
+    .email-footer a {
+      color: #667eea;
+      text-decoration: none;
+    }
+
+    .email-footer a:hover {
+      text-decoration: underline;
+    }
+
+    @media only screen and (max-width: 600px) {
+      .email-container {
+        margin: 0;
+        border-radius: 0;
+      }
+
+      .email-body {
+        padding: 20px 15px;
+      }
+
+      .email-header {
+        padding: 20px 15px;
+      }
+
+      .email-header h1 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="email-container">
+    <div class="email-header">
+      <h1>Welcome to summerizer! 🎉</h1>
+    </div>
+
+    <div class="email-body">
+      <p>Hi there,</p>
+      <p>Thanks for signing up for a summerizer account. We're excited to have you on board!</p>
+
+      <div class="info-box">
+        <strong>Your Account Details</strong>
+        User ID: <strong>{{.UserID}}</strong>
+      </div>
+
+      <div class="activation-section">
+        <h2>🔐 Activate Your Account</h2>
+        <p>To complete your registration, please send a PUT request to the following endpoint:</p>
+
+        <div class="code-block">
+          <span class="endpoint">PUT /v1/users/activated</span>
+        </div>
+
+        <p><strong>Request Body (JSON):</strong></p>
+        <div class="code-block">
+          {
+          "token": "{{.ActivationToken}}"
+          }
+        </div>
+      </div>
+
+      <div class="warning">
+        <strong>⚠️ Important:</strong> This is a one-time use token that will expire in a day. Please activate your
+        account as soon as possible.
+      </div>
+
+      <p style="margin-top: 25px;">If you didn't create this account, please ignore this email or contact our support
+        team immediately.</p>
+
+      <p style="margin-top: 25px;">Thanks,<br><strong>The summerizer Team</strong></p>
+    </div>
+
+    <div class="email-footer">
+      <p>Need help? <a href="mailto:support@summerizer.example.com">Contact Support</a></p>
+      <p style="margin-top: 15px;">
+        <a href="https://summerizer.example.com/privacy">Privacy Policy</a> |
+        <a href="https://summerizer.example.com/terms">Terms of Service</a>
+      </p>
+      <p style="margin-top: 10px; color: #999;">© 2026 summerizer. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+
+</html>
+{{end}}
