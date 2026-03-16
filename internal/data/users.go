@@ -59,6 +59,14 @@ func ValidateUser(v *validator.Validator, user *User) {
 	v.Check(len(user.Fullname) <= 200, "fullname", "must not be more than 200 characters")
 
 	ValidateEmail(v, user.Email)
+
+	if user.Password.plaintext != nil {
+		ValidatePasswordPlaintext(v, *user.Password.plaintext)
+	}
+
+	if user.Password.hash == nil {
+		panic("missing password hash for user")
+	}
 }
 
 // ValidateLoginInput validates the login request fields.
@@ -116,6 +124,7 @@ func (m *UserModel) Insert(user *User) error{
 		&user.ID,
 		&user.CreatedAt,
 		&user.Version,
+		&user.UpdatedAt,
 	)
 	if err != nil {
 		switch {

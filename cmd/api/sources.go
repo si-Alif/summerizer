@@ -91,7 +91,7 @@ func (app *application) createSourceHandler(w http.ResponseWriter, r *http.Reque
 	headers := make(http.Header)
 	headers.Set("Location", fmt.Sprintf("/v1/sources/%d", source.ID))
 
-	err = app.writeJSON(w, http.StatusCreated, envelop{"source": source}, headers)
+	err = app.writeJSON(w, http.StatusCreated, envelope{"source": source}, headers)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -133,7 +133,7 @@ func (app *application) listSourceHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"sources": sources, "metadata": metadata}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"sources": sources, "metadata": metadata}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -161,7 +161,7 @@ func (app *application) showSourceHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"source": source}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"source": source}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -187,7 +187,7 @@ func (app *application) deleteSourceHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"message": "source successfully deleted"}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"message": "source successfully deleted"}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}

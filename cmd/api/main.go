@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
-	"fmt"
+
 	"log/slog"
 	"os"
 	"time"
@@ -79,10 +79,6 @@ func main() {
 	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
 
 	flag.Parse()
-
-	fmt.Printf("limiter burst: %d\n", cfg.limiter.burst)
-	fmt.Printf("limiter rps: %f\n", cfg.limiter.rps)
-	fmt.Printf("limiter enabled: %t\n", cfg.limiter.enabled)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 

@@ -56,7 +56,7 @@ func (app *application) searchCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"results": results}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"results": results}, nil)
 
 
 }
@@ -106,7 +106,7 @@ func (app *application) askCollectionHandler(w http.ResponseWriter, r *http.Requ
         return
     }
 
-    err = app.writeJSON(w, http.StatusOK, envelop{
+    err = app.writeJSON(w, http.StatusOK, envelope{
         "answer":  result.Answer,
         "sources": result.Sources,
     }, nil)

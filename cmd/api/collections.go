@@ -38,7 +38,7 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{
+	err = app.writeJSON(w, http.StatusOK, envelope{
 		"collection":     collection,
 		"source_summary": sourceStatusSummary,
 	}, nil)
@@ -86,7 +86,7 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 	headers := make(http.Header)
 	headers.Set("Location", fmt.Sprintf("/v1/collections/%d", collection.ID))
 
-	err = app.writeJSON(w, http.StatusCreated, envelop{"collection": collection}, headers)
+	err = app.writeJSON(w, http.StatusCreated, envelope{"collection": collection}, headers)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -160,7 +160,7 @@ func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"collection": collection}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"collection": collection}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -186,7 +186,7 @@ func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{"message": "collection successfully deleted"}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"message": "collection successfully deleted"}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
@@ -226,7 +226,7 @@ func (app *application) listCollectionsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelop{
+	err = app.writeJSON(w, http.StatusOK, envelope{
 		"metadata":    metadata,
 		"collections": collections,
 	}, nil)

@@ -22,7 +22,7 @@ func (app *application) errorResponse(
 	statusCode int,
 	msg any,
 ) {
-	env := envelop{
+	env := envelope{
 		"error": msg,
 	}
 

@@ -15,7 +15,7 @@ import (
 )
 
 // for better structuring of the json output where the JSON value would be labeled with a key
-type envelop map[string]any
+type envelope map[string]any
 
 /*
 - readIDParam extracts the `id` path parameter from the request context (set by httprouter),
@@ -40,7 +40,7 @@ func (app *application) readIDParam(r *http.Request) (int64, error) {
 }
 
 
-func (app *application) writeJSON(w http.ResponseWriter, status int, data envelop, headers http.Header) error {
+func (app *application) writeJSON(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
 	js, err := json.MarshalIndent(data, "", "\t")
 
 	if err != nil {
