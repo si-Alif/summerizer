@@ -30,5 +30,5 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
 	router.HandlerFunc(http.MethodDelete, "/v1/sources/:id", app.deleteSourceHandler)
 
-	return router
+	return app.recoverPanic(app.rateLimit(router))
 }

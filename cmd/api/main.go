@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -38,6 +39,11 @@ type config struct {
 		worker_count int
 		poll_interval time.Duration
 	}
+	limiter struct{
+		rps float64
+		burst int
+		enabled bool
+	}
 }
 
 
@@ -67,7 +73,16 @@ func main() {
 	flag.IntVar(&cfg.worker_pool.worker_count, "worker-count", 10, "Number of worker goroutines")
 	flag.DurationVar(&cfg.worker_pool.poll_interval, "poll-interval", 5*time.Second, "Interval between polls for pending sources")
 
+	// rate limiter settings
+	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
+	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter burst size")
+	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
+
 	flag.Parse()
+
+	fmt.Printf("limiter burst: %d\n", cfg.limiter.burst)
+	fmt.Printf("limiter rps: %f\n", cfg.limiter.rps)
+	fmt.Printf("limiter enabled: %t\n", cfg.limiter.enabled)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 

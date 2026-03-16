@@ -51,9 +51,31 @@ db/logs:
 # =================================================================
 
 ## run/api : run the cmd/api application
+port ?= 4000
+env ?= development
+db-max-open-conns ?= 25
+db-max-idle-conns ?= 25
+db-max-idle-time ?= 15m
+worker-count ?= 10
+poll-interval ?= 5s
+limiter-rps ?= 2
+limiter-burst ?= 4
+limiter-enabled ?= true
+
 .PHONY: run/api
 run/api:
-	@go run ./cmd/api -db-dsn=${SUMMERIZER_DB_DSN}
+	@go run ./cmd/api \
+		-port=${port} \
+		-env=${env} \
+		-db-dsn=${SUMMERIZER_DB_DSN} \
+		-db-max-open-conns=${db-max-open-conns} \
+		-db-max-idle-conns=${db-max-idle-conns} \
+		-db-max-idle-time=${db-max-idle-time} \
+		-worker-count=${worker-count} \
+		-poll-interval=${poll-interval} \
+		-limiter-rps=${limiter-rps} \
+		-limiter-burst=${limiter-burst} \
+		-limiter-enabled=${limiter-enabled}
 
 ## db/psql : connect to the Greenlight database using psql
 .PHONY: db/psql
