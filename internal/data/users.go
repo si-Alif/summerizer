@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/si-Alif/summerizer/internal/validator"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -126,9 +127,11 @@ func (m *UserModel) Insert(user *User) error{
 		&user.Version,
 		&user.UpdatedAt,
 	)
+
 	if err != nil {
+		var pgErr *pgconn.PgError
 		switch {
-		case err.Error() == `pq: duplicate key value violates unique constraint "users_email_key"`:
+		case errors.As(err, &pgErr) && pgErr.Code == "23505":
 			return ErrDuplicateEmail
 		default:
 			return err
