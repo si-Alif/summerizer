@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"time"
@@ -238,5 +239,56 @@ func (m *UserModel) Update(user *User) error {
 
 }
 
+func (m *UserModel) Delete(id int64) error {
+	query := `DELETE FROM users WHERE id = $1`
 
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := m.DB.ExecContext(ctx, query, id)
+	return err
+}
+
+func (m *UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error) {
+	query := `
+	SELECT u.id , u.fullname, u.email , u.password_hash, u.activated, u.created_at, u.updated_at, u.version
+	FROM users AS u
+	INNER JOIN tokens AS t ON u.id = t.user_id
+	WHERE
+		t.hash = $1 AND
+		scope = $2 AND
+		t.expiry > $3
+	`
+
+	hash := sha256.Sum256([]byte(tokenPlaintext))
+
+	var user User
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	args := []any{hash[:], tokenScope, time.Now()}
+
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(
+		&user.ID,
+		&user.Fullname,
+		&user.Email,
+		&user.Password.hash,
+		&user.Activated,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&user.Version,
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+
+	return &user, nil
+}
 
