@@ -18,16 +18,10 @@ func (app *application) SetUserInRequestContext(r *http.Request, user *data.User
 }
 
 func (app *application) GetUserFromSubsequentRequestContext(r *http.Request) *data.User {
-	// user, ok := r.Context().Value(contextKeyUser).(*data.User)
-	// if !ok {
-	// 	panic("missing user value in request context")
-	// }
-
-	user := &data.User{
-		ID: 1,
-		Fullname: "John Doe",
-		Email: "john.doe@example.com",
+	user, ok := r.Context().Value(contextKeyUser).(*data.User)
+	if !ok {
+		panic("missing user value in request context")
 	}
-
+	
 	return user
 }
