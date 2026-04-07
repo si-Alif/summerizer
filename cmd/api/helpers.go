@@ -164,5 +164,5 @@ func (app *application) SpawnBackgroundTask(fn func()) {
 		}()
 		fn()
 	}()
-	
+
 }

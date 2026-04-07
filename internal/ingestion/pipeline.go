@@ -63,7 +63,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	rawContent, err := p.fetcher.Fetch(source.URL)
 	if err != nil {
 		p.failSource(source.ID , "fetch" , err)
-		log.Error("Failed to fetch content", "error", err)
+		return fmt.Errorf("fetch failed: %w", err)
 	}
 
 	log.Info("pipeline: fetched", "title", rawContent.Title, "chars", len(rawContent.TextContent))
@@ -74,10 +74,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "clean")
 
 	if err != nil {
-		return fmt.Errorf("update step to clean %w" , err)
+		return fmt.Errorf("update step to clean for source %d: %w", source.ID, err)
 	}
-
-
 
 	blocks, err := cleaner.ExtractBlocks(rawContent.HTMLContent)
 
@@ -110,7 +108,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "chunk")
 
 	if err != nil {
-		return fmt.Errorf("update step to chunk %w" , err)
+		return fmt.Errorf("update step to chunk for source %d: %w", source.ID, err)
 	}
 
 	chunks  , err := p.chunker.ChunkContent(blocks , rawContent.Title , source.URL)
@@ -133,7 +131,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "store")
 
 	if err != nil {
-		return fmt.Errorf("update step to store %w" , err)
+		return fmt.Errorf("update step to store for source %d: %w", source.ID, err)
 	}
 
 	dataChunks := make([]*data.Chunk , len(chunks))
@@ -200,7 +198,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "completed" , "embed")
 
 	if err != nil {
-		return fmt.Errorf("update step to completed %w" , err)
+		return fmt.Errorf("update step to completed for source %d: %w", source.ID, err)
 	}
 
 	log.Info("pipeline: completed",
