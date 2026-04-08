@@ -150,27 +150,5 @@ curl http://localhost:4000/v1/healthcheck
 - **Search performance**: pgvector cosine similarity + HNSW index
 - **API consistency**: structured JSON responses + validation + middleware
 
-## Security and Production Notes
 
-- Do not commit secrets (.envrc, API keys, SMTP creds)
-- Use environment-specific configs and secret management
-- Keep authorization checks in the data layer even when middleware guards routes
-- Add explicit per-collection authorization for sharing (owner/editor/viewer/public)
-- Add integration tests and request tracing before production deployment
 
-## Roadmap
-
-- Complete YouTube transcript ingestion
-- Complete PDF extraction ingestion
-- Add collection sharing + permission-based retrieval/editing
-- Add integration + end-to-end tests
-- Add observability (metrics/tracing)
-- Improve citation formatting in answers
-
-## Why This Is a Strong Portfolio Project
-
-This is not a toy CRUD app. It demonstrates:
-
-- system design across API, workers, storage, and AI integrations
-- real-world backend concerns (retries, indexing, migrations, validation, limits)
-- practical RAG architecture in Go
