@@ -75,7 +75,13 @@ run/api:
 		-poll-interval=${poll-interval} \
 		-limiter-rps=${limiter-rps} \
 		-limiter-burst=${limiter-burst} \
-		-limiter-enabled=${limiter-enabled}
+		-limiter-enabled=${limiter-enabled}\
+		-smtp-host=${SMTP_HOST} \
+		-smtp-port=${SMTP_PORT} \
+		-smtp-username=${SMTP_USERNAME} \
+		-smtp-password=${SMTP_PASSWORD} \
+		-smtp-sender=${SMTP_SENDER}
+
 
 ## db/psql : connect to the Greenlight database using psql
 .PHONY: db/psql
