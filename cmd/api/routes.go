@@ -15,25 +15,25 @@ func (app *application) routes() http.Handler {
 
 	router.HandlerFunc(http.MethodGet, "/v1/healthcheck", app.healthCheckHandler)
 
-	// collection routes — will be wrapped with requireAuthenticatedUser once auth is wired up
-	router.HandlerFunc(http.MethodPost, "/v1/collections", app.createCollectionHandler)
-	router.HandlerFunc(http.MethodGet, "/v1/collections", app.listCollectionsHandler)
-	router.HandlerFunc(http.MethodGet, "/v1/collections/:id", app.showCollectionHandler)
-	router.HandlerFunc(http.MethodPatch, "/v1/collections/:id", app.updateCollectionHandler)
-	router.HandlerFunc(http.MethodDelete, "/v1/collections/:id", app.deleteCollectionHandler)
-	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/search", app.searchCollectionHandler)
-	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/ask", app.askCollectionHandler)
+	
+	router.HandlerFunc(http.MethodPost, "/v1/collections", app.requireActivatedUser(app.createCollectionHandler))
+	router.HandlerFunc(http.MethodGet, "/v1/collections", app.requireActivatedUser(app.listCollectionsHandler))
+	router.HandlerFunc(http.MethodGet, "/v1/collections/:id", app.requireActivatedUser(app.showCollectionHandler))
+	router.HandlerFunc(http.MethodPatch, "/v1/collections/:id", app.requireActivatedUser(app.updateCollectionHandler))
+	router.HandlerFunc(http.MethodDelete, "/v1/collections/:id", app.requireActivatedUser(app.deleteCollectionHandler))
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/search", app.requireActivatedUser(app.searchCollectionHandler))
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/ask", app.requireActivatedUser(app.askCollectionHandler))
 
 	// source routes
-	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/sources", app.createSourceHandler)
-	router.HandlerFunc(http.MethodGet, "/v1/collections/:id/sources", app.listSourceHandler)
-	router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.showSourceHandler)
-	router.HandlerFunc(http.MethodDelete, "/v1/sources/:id", app.deleteSourceHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/collections/:id/sources", app.requireActivatedUser(app.createSourceHandler))
+	router.HandlerFunc(http.MethodGet, "/v1/collections/:id/sources", app.requireActivatedUser(app.listSourceHandler))
+	router.HandlerFunc(http.MethodGet, "/v1/sources/:id", app.requireActivatedUser(app.showSourceHandler))
+	router.HandlerFunc(http.MethodDelete, "/v1/sources/:id", app.requireActivatedUser(app.deleteSourceHandler))
 
 	// user routes
 	router.HandlerFunc(http.MethodPost, "/v1/users", app.registerUserHandler)
 	router.HandlerFunc(http.MethodPut, "/v1/users/activated", app.activateUserHandler)
-	
+
 
 
 	// token routes
