@@ -363,6 +363,7 @@ func (m SourceModel) ClaimPending(limit int) ([]*Source, error) {
 				metadata, created_at, updated_at, version
 	FROM sources
 	WHERE status IN ('pending', 'failed')
+		AND (retry_count < 5 OR retry_count IS NULL)
 		AND (next_retry_at IS NULL OR next_retry_at <= now())
 	ORDER BY next_retry_at ASC NULLS FIRST
 	FOR UPDATE SKIP LOCKED
@@ -482,13 +483,31 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
 		retry_count = retry_count + 1,
 		next_retry_at = now() + (interval '1 minute' * power(2, retry_count)),
 		version = version + 1
-	WHERE id = $3`
+	WHERE id = $3
+	RETURNING retry_count`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	args := []any{step, errMsg, id}
-	_, err := m.DB.ExecContext(ctx, query, args...)
+	var retryCount int
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&retryCount)
+
+	if err != nil {
+		return err
+	}
+
+	if retryCount > 5 {
+		updateQuery := `
+		UPDATE sources
+		SET status = 'stale', version = version + 1
+		WHERE id = $1`
+
+	_, updateErr := m.DB.ExecContext(ctx, updateQuery, id)
+		if updateErr != nil {
+			return fmt.Errorf("marking source as stale after max retries: %w", updateErr)
+		}
+	}
 
 	return  err
 }
