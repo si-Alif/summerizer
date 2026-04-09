@@ -3,8 +3,10 @@ package ingestion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
@@ -20,6 +22,11 @@ type Pipeline struct {
 	logger *slog.Logger
 	embedder *embedder.Embedder
 }
+
+var (
+	ErrNoContentToChunk = errors.New("no content extracted")
+	ErrNoChunksGenerated = errors.New("chunker returned no chunks")
+)
 
 func NewPipeline(
 	models data.Models,
@@ -37,7 +44,7 @@ func NewPipeline(
 	}
 }
 
-type FailureDetection struct {
+type FailureDecision struct {
 	NonRetryable bool
 	Reason string
 }
@@ -65,15 +72,14 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 
 	err := p.models.Sources.UpdateStatus(source.ID , "ingesting" , "fetch")
 	if err != nil {
+		p.failSource(source.ID , "fetch" , err)
 		return fmt.Errorf("update step to fetch for source %d: %w", source.ID, err)
 	}
 
-	var FetcherErr *fetcher.FetcherErrors
-
-	rawContent, FetcherErr := p.fetcher.Fetch(source.URL)
-	if FetcherErr != nil {
-		p.failSource(source.ID , "fetch" , FetcherErr.Err)
-		return fmt.Errorf("fetch failed: %w", FetcherErr)
+	rawContent, err := p.fetcher.Fetch(source.URL)
+	if err != nil {
+		p.failSource(source.ID , "fetch" , err)
+		return fmt.Errorf("fetching content: %w", err)
 	}
 
 	log.Info("pipeline: fetched", "title", rawContent.Title, "chars", len(rawContent.TextContent))
@@ -84,30 +90,32 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "clean")
 
 	if err != nil {
-		return fmt.Errorf("update step to clean for source %d: %w", source.ID, err)
+		err := fmt.Errorf("update step to clean for source %d: %w", source.ID, err)
+		p.failSource(source.ID , "clean" , err)
+		return err
 	}
 
 	blocks, err := cleaner.ExtractBlocks(rawContent.HTMLContent)
 
 	if err != nil || len(blocks) ==0 {
 		switch {
-			case err != nil:
-				log.Warn("pipeline: HTML extraction failed, falling back to plain text", "error", err)
-			default :
-				log.Warn("pipeline: HTML extraction returned no blocks, falling back to plain text")
+		case err != nil:
+			log.Warn("pipeline: HTML extraction failed, falling back to plain text", "error", err)
+		default :
+			log.Warn("pipeline: HTML extraction returned no blocks, falling back to plain text")
 		}
 
 		blocks = cleaner.FromPlainText(rawContent.TextContent)
 	}
 
+	if len(blocks) == 0{
+		p.failSource(source.ID, "clean", ErrNoContentToChunk)
+		return fmt.Errorf("clean failed: %w", ErrNoContentToChunk)
+	}
+
 	if len(blocks) > 2000 {
 		log.Warn("pipeline: extracted a large number of blocks, which may indicate an issue with the HTML structure or extraction logic . Falling back to plain text", "block_count", len(blocks))
 		blocks = cleaner.FromPlainText(rawContent.TextContent)
-	}
-
-	if len(blocks) == 0{
-		p.failSource(source.ID, "clean", fmt.Errorf("no content extracted"))
-		return fmt.Errorf("clean failed: no content extracted")
 	}
 
 	log.Info("pipeline: cleaned", "blocks", len(blocks))
@@ -118,7 +126,9 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "chunk")
 
 	if err != nil {
-		return fmt.Errorf("update step to chunk for source %d: %w", source.ID, err)
+		err := fmt.Errorf("update step to chunk for source %d: %w", source.ID, err)
+		p.failSource(source.ID , "chunk" , err)
+		return err
 	}
 
 	chunks  , err := p.chunker.ChunkContent(blocks , rawContent.Title , source.URL)
@@ -129,7 +139,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	}
 
 	if len(chunks) == 0 {
-		p.failSource(source.ID, "chunk", fmt.Errorf("no chunks generated"))
+		p.failSource(source.ID, "chunk", ErrNoChunksGenerated)
 		return fmt.Errorf("chunking failed: no chunks generated")
 	}
 
@@ -141,6 +151,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "store")
 
 	if err != nil {
+		p.failSource(source.ID , "store" , err)
 		return fmt.Errorf("update step to store for source %d: %w", source.ID, err)
 	}
 
@@ -188,8 +199,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	embeddings , err := p.embedder.GetEmbeddings(ctx , contents)
 
 	if err != nil {
-    p.failSource(source.ID, "embed", err)
-    return fmt.Errorf("embedding failed: %w", err)
+	    p.failSource(source.ID, "embed", err)
+	    return fmt.Errorf("embedding failed: %w", err)
 	}
 
 	chunkIDs := make([]int64 , len(dataChunks))
@@ -220,16 +231,118 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 }
 
 
-func (p *Pipeline) failSource(sourceID int64 , step string , err error){
-	updateErr := p.models.Sources.MarkAsFailed(sourceID , step , err.Error())
+func (p *Pipeline) failSource(sourceID int64 , step string , err error) {
 
-	if updateErr != nil {
-		p.logger.Error("failed to update source status " ,
-			"source_id" , sourceID ,
-			"step" , step ,
-			"error" , updateErr,
-			"original_error" , err,
-		)
+	decision := classifyFailure(err)
+
+	var updateErr error
+
+	if decision.NonRetryable {
+		updateErr = p.models.Sources.MarkAsStale(sourceID , step , err.Error())
+	}else{
+		updateErr = p.models.Sources.MarkAsFailed(sourceID , step , err.Error())
 	}
 
+	if updateErr != nil {
+		p.logger.Error("failed to update source status",
+				"source_id", sourceID,
+				"step", step,
+				"error", updateErr,
+				"original_error", err,
+				"non_retryable", decision.NonRetryable,
+				"reason", decision.Reason,
+		)
+  }
+
+
+}
+
+func classifyFailure(err error) FailureDecision{
+	if err == nil {
+		return FailureDecision{}
+	}
+
+	if errors.Is(err , fetcher.ErrInvalidURL) ||
+		errors.Is(err , fetcher.ErrEmptyContent) ||
+		errors.Is(err , fetcher.ErrUnexpectedContentType) ||
+		errors.Is(err , embedder.ErrEmptyInput) ||
+		errors.Is(err , ErrNoContentToChunk) ||
+		errors.Is(err , ErrNoChunksGenerated) {
+		return FailureDecision{
+			NonRetryable: true,
+			Reason: "invalid or unprocessable content",
+		}
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return FailureDecision{
+			NonRetryable: false,
+			Reason: "context cancellation or timeout",
+		}
+	}
+
+	var (
+		embedderErr *embedder.EmbeddingErrors
+		networkErr net.Error
+		fetcherErr *fetcher.FetcherErrors
+	)
+
+	switch {
+		case errors.As(err, &fetcherErr):
+			if isPermanentHTTPStatus(fetcherErr.StatusCode) {
+				return FailureDecision{
+					NonRetryable: true,
+					Reason: "invalid or unprocessable content",
+				}
+			}else{
+				return FailureDecision{
+					NonRetryable: false,
+					Reason: fmt.Sprintf("temporary error with status code %d", fetcherErr.StatusCode),
+				}
+			}
+		case errors.As(err, &embedderErr):
+			if isPermanentHTTPStatus(embedderErr.StatusCode) {
+				return FailureDecision{
+					NonRetryable: true,
+					Reason: "invalid or unprocessable content",
+				}
+			}else{
+				return FailureDecision{
+					NonRetryable: false,
+					Reason: fmt.Sprintf("temporary error with status code %d", embedderErr.StatusCode),
+				}
+			}
+		case errors.As(err, &networkErr):
+			if networkErr.Timeout() {
+				return FailureDecision{
+					NonRetryable: false,
+					Reason: "network timeout",
+				}
+			}else{
+				return FailureDecision{
+					NonRetryable: false,
+					Reason: "network error",
+				}
+			}
+		default:
+			return FailureDecision{
+				NonRetryable: false,
+				Reason: "unknown error",
+			}
+	}
+
+}
+
+func isPermanentHTTPStatus(code int) bool {
+    switch code {
+    case 400, 401, 403, 404, 405, 410, 422, 451:
+        return true
+    case 408, 409, 425, 429:
+        return false
+    default:
+        if code >= 500 {
+            return false
+        }
+        return code >= 400 && code < 500
+    }
 }

@@ -3,6 +3,7 @@ package fetcher
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -33,6 +34,28 @@ type FetcherErrors struct{
 	Err error
 }
 
+// Error method helps the FetcherErrors type to satisfy the error interface, allowing it to be used as an "error" in Go . It provides a string representation of the error, including the URL, status code, and the underlying error message if available.
+func (e *FetcherErrors) Error() string {
+	if e == nil {
+		return "fetcher error: <nil>"
+	}
+
+	if e.Err == nil {
+		return fmt.Sprintf("fetcher error status=%d url=%s", e.StatusCode, e.URL)
+	}
+
+	return fmt.Sprintf("fetcher error status=%d url=%s: %v", e.StatusCode, e.URL, e.Err)
+}
+
+// Unwrap method allows you to retrieve the underlying error wrapped by the FetcherErrors type. This is useful for error handling and allows you to check for specific error types using errors.Is()
+func (e *FetcherErrors) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.Err
+}
+
 type RawContent struct {
 	Title  string
 	TextContent string
@@ -54,7 +77,7 @@ func NewFetcher() *Fetcher {
 }
 
 
-func (f *Fetcher) Fetch(rawURL string) (*RawContent, *FetcherErrors) {
+func (f *Fetcher) Fetch(rawURL string) (*RawContent, error) {
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || (parsedURL.Scheme == "" && parsedURL.Host == "") {
@@ -64,7 +87,7 @@ func (f *Fetcher) Fetch(rawURL string) (*RawContent, *FetcherErrors) {
 	resp, err := f.httpClient.Get(rawURL)
 
 	if err != nil {
-		return nil , &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
+		return nil, &FetcherErrors{URL: rawURL, Err: errors.Join(ErrFetchFailed, err), StatusCode: http.StatusServiceUnavailable}
 	}
 
 	defer resp.Body.Close()
@@ -75,23 +98,23 @@ func (f *Fetcher) Fetch(rawURL string) (*RawContent, *FetcherErrors) {
 
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType , ContentTypeHTML) {
-		return nil, &FetcherErrors{URL: rawURL, Err: ErrUnexpectedContentType, StatusCode: http.StatusBadRequest}
+		return nil, &FetcherErrors{URL: rawURL, Err: ErrUnexpectedContentType, StatusCode: http.StatusUnsupportedMediaType}
 	}
 
 	body := io.LimitReader(resp.Body, maxBodySize)
 	b , err := io.ReadAll(body)
 	if err != nil {
-		return nil, &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
+		return nil, &FetcherErrors{URL: rawURL, Err: errors.Join(ErrFetchFailed, err), StatusCode: http.StatusBadGateway}
 	}
 
 
 	article , err := readability.FromReader(bytes.NewReader(b), parsedURL)
 	if err != nil {
-		return nil, &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
+		return nil, &FetcherErrors{URL: rawURL, Err: errors.Join(ErrFetchFailed, err), StatusCode: http.StatusBadGateway}
 	}
 
 	if strings.TrimSpace(article.TextContent) == "" {
-			return nil, &FetcherErrors{URL: rawURL, Err: ErrEmptyContent, StatusCode: http.StatusBadRequest}
+			return nil, &FetcherErrors{URL: rawURL, Err: ErrEmptyContent, StatusCode: http.StatusUnprocessableEntity}
 	}
 
 	return &RawContent{

@@ -511,3 +511,22 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
 
 	return  err
 }
+
+func (m SourceModel) MarkAsStale(id int64, step string, errMsg string) error {
+    query := `
+    UPDATE sources
+    SET
+        status = 'stale',
+        current_step = $1,
+        step_error = $2,
+        next_retry_at = NULL,
+        retry_count = COALESCE(retry_count, 0) + 1,
+        version = version + 1
+    WHERE id = $3`
+
+    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+    defer cancel()
+
+    _, err := m.DB.ExecContext(ctx, query, step, errMsg, id)
+    return err
+}

@@ -17,6 +17,7 @@ const (
 )
 
 var (
+	ErrEmptyInput = errors.New("embedder: input texts cannot be empty")
 	ErrBadRequestResponse = errors.New("embedder: bad request response body")
 	ErrEmbeddingFailed = errors.New("embedder: failed to get embeddings")
 	ErrInvalidResponse = errors.New("embedder: invalid response from embedding service")
@@ -29,9 +30,32 @@ type Embedder struct {
 	baseURL string
 }
 
-type EmbeddeingErrors struct {
+type EmbeddingErrors struct {
 	StatusCode int
 	Err error
+}
+
+
+// Error method helps the EmbeddingErrors type to satisfy the error interface, allowing it to be used as an "error" in Go . It provides a string representation of the error, including the status code and the underlying error message if available.
+func (e *EmbeddingErrors) Error() string {
+	if e == nil {
+		return "embedder error: <nil>"
+	}
+
+	if e.Err == nil {
+		return fmt.Sprintf("embedder error status=%d", e.StatusCode)
+	}
+
+	return fmt.Sprintf("embedder error status=%d: %v", e.StatusCode, e.Err)
+}
+
+// Unwrap method allows you to retrieve the underlying error wrapped by the EmbeddingErrors type. This is useful for error handling and allows you to check for specific error types using errors.Is()
+func (e *EmbeddingErrors) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.Err
 }
 
 func NewEmbedder(baseURL, model string) *Embedder {
@@ -60,11 +84,11 @@ type embedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
-func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float32, *EmbeddeingErrors) {
+func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
 	texts_len := len(texts)
 
 	if texts_len == 0 {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err: ErrBadRequestResponse	}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusBadRequest, Err: ErrEmptyInput}
 	}
 
 	payload , err := json.Marshal(embedRequestBody{
@@ -73,14 +97,14 @@ func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float
 	})
 
 	if err != nil {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err: ErrBadRequestResponse}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrEmbeddingFailed, err)}
 	}
 
 	queryURL := fmt.Sprintf("%s/api/embed", e.baseURL)
 	req , err := http.NewRequestWithContext(ctx , "POST", queryURL, bytes.NewBuffer(payload))
 
 	if err != nil {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err: ErrFailedRequest}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrFailedRequest, err)}
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -88,13 +112,13 @@ func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float
 	resp , err := e.httpClient.Do(req)
 
 	if err != nil {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err: ErrFailedRequest}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusServiceUnavailable, Err: errors.Join(ErrFailedRequest, err)}
 	}
 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &EmbeddeingErrors{StatusCode: resp.StatusCode, Err: ErrInvalidResponse}
+		return nil, &EmbeddingErrors{StatusCode: resp.StatusCode, Err: ErrInvalidResponse}
 	}
 
 	var embedResp embedResponse
@@ -102,11 +126,11 @@ func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float
 	err = json.NewDecoder(resp.Body).Decode(&embedResp)
 
 	if err != nil {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err: ErrInvalidResponse}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: errors.Join(ErrInvalidResponse, err)}
 	}
 
 	if len(embedResp.Embeddings) != texts_len {
-		return nil, &EmbeddeingErrors{StatusCode: http.StatusBadRequest, Err : ErrBadRequestResponse}
+		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: ErrBadRequestResponse}
 	}
 
 	return embedResp.Embeddings, nil
