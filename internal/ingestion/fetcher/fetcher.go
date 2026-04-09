@@ -2,7 +2,7 @@ package fetcher
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-shiori/go-readability"
-
 )
 
 
@@ -21,12 +20,18 @@ const (
 )
 
 var (
-	ErrInvalidURL = fmt.Errorf("invalid web URL")
-	ErrFetchFailed = fmt.Errorf("failed to fetch content")
-	ErrUnexpectedContentType = fmt.Errorf("unexpected content type")
-	ErrUnexpectedStatusCode = fmt.Errorf("unexpected status code")
-	ErrEmptyContent = fmt.Errorf("fetched content is empty")
+	ErrInvalidURL = errors.New("invalid web URL")
+	ErrFetchFailed = errors.New("failed to fetch content")
+	ErrUnexpectedContentType = errors.New("unexpected content type")
+	ErrUnexpectedStatusCode = errors.New("unexpected status code")
+	ErrEmptyContent = errors.New("fetched content is empty")
 )
+
+type FetcherErrors struct{
+	URL string
+	StatusCode int
+	Err error
+}
 
 type RawContent struct {
 	Title  string
@@ -49,44 +54,44 @@ func NewFetcher() *Fetcher {
 }
 
 
-func (f *Fetcher) Fetch(rawURL string) (*RawContent, error) {
+func (f *Fetcher) Fetch(rawURL string) (*RawContent, *FetcherErrors) {
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || (parsedURL.Scheme == "" && parsedURL.Host == "") {
-		return nil, ErrInvalidURL
+		return nil, &FetcherErrors{URL: rawURL, Err: ErrInvalidURL , StatusCode: http.StatusBadRequest}
 	}
 
 	resp, err := f.httpClient.Get(rawURL)
 
 	if err != nil {
-		return nil , fmt.Errorf("%w: %s", ErrFetchFailed, err.Error())
+		return nil , &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
 	}
 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("%w: got %d", ErrUnexpectedStatusCode, resp.StatusCode)
+			return nil, &FetcherErrors{URL: rawURL , Err : ErrUnexpectedStatusCode , StatusCode: resp.StatusCode}
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType , ContentTypeHTML) {
-		return nil, fmt.Errorf("%w: got %s", ErrUnexpectedContentType, contentType)
+		return nil, &FetcherErrors{URL: rawURL, Err: ErrUnexpectedContentType, StatusCode: http.StatusBadRequest}
 	}
 
 	body := io.LimitReader(resp.Body, maxBodySize)
 	b , err := io.ReadAll(body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading body: %s", ErrFetchFailed, err.Error())
+		return nil, &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
 	}
 
 
 	article , err := readability.FromReader(bytes.NewReader(b), parsedURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrFetchFailed, err.Error())
+		return nil, &FetcherErrors{URL: rawURL, Err: ErrFetchFailed, StatusCode: http.StatusInternalServerError}
 	}
 
 	if strings.TrimSpace(article.TextContent) == "" {
-			return nil, ErrEmptyContent
+			return nil, &FetcherErrors{URL: rawURL, Err: ErrEmptyContent, StatusCode: http.StatusBadRequest}
 	}
 
 	return &RawContent{

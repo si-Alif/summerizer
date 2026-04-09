@@ -37,6 +37,11 @@ func NewPipeline(
 	}
 }
 
+type FailureDetection struct {
+	NonRetryable bool
+	Reason string
+}
+
 // Process runs the full ingestion pipeline for a single source.
 //
 // Flow:
@@ -59,11 +64,16 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 	log.Info("Fetching content")
 
 	err := p.models.Sources.UpdateStatus(source.ID , "ingesting" , "fetch")
-
-	rawContent, err := p.fetcher.Fetch(source.URL)
 	if err != nil {
-		p.failSource(source.ID , "fetch" , err)
-		return fmt.Errorf("fetch failed: %w", err)
+		return fmt.Errorf("update step to fetch for source %d: %w", source.ID, err)
+	}
+
+	var FetcherErr *fetcher.FetcherErrors
+
+	rawContent, FetcherErr := p.fetcher.Fetch(source.URL)
+	if FetcherErr != nil {
+		p.failSource(source.ID , "fetch" , FetcherErr.Err)
+		return fmt.Errorf("fetch failed: %w", FetcherErr)
 	}
 
 	log.Info("pipeline: fetched", "title", rawContent.Title, "chars", len(rawContent.TextContent))

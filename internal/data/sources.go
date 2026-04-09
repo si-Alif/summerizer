@@ -497,7 +497,7 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
 		return err
 	}
 
-	if retryCount > 5 {
+	if retryCount >= 5 {
 		updateQuery := `
 		UPDATE sources
 		SET status = 'stale', version = version + 1
