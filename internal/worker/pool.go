@@ -11,13 +11,16 @@ import (
 )
 
 type Pool struct {
-	workerCount  int
-	pollInterval time.Duration
-	models       data.Models
-	logger       *slog.Logger
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	pipeline 		*ingestion.Pipeline
+	workerCount    int
+	pollInterval   time.Duration
+	models         data.Models
+	logger         *slog.Logger
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	pipeline       *ingestion.Pipeline
+	startedAt      time.Time
+	firstPollOnce  sync.Once
+	firstClaimOnce sync.Once
 }
 
 func NewPool(
@@ -32,60 +35,86 @@ func NewPool(
 		pollInterval: pollInterval,
 		models:       data,
 		logger:       logger,
-		pipeline: pipeline,
+		pipeline:     pipeline,
 	}
 }
 
-func (p *Pool) Start(ctx context.Context){
+func (p *Pool) Start(ctx context.Context) {
 
-	ctx , p.cancel = context.WithCancel(ctx)
+	ctx, p.cancel = context.WithCancel(ctx)
+	p.startedAt = time.Now()
 
 	for i := 0; i < p.workerCount; i++ {
 		p.wg.Add(1)
-		go p.run(ctx , i)
+		go p.run(ctx, i)
 	}
 }
 
-func (p *Pool) run(ctx context.Context , worker_id int) {
+func (p *Pool) run(ctx context.Context, worker_id int) {
 	defer p.wg.Done()
 
-	defer func(){
-		if r:= recover(); r != nil {
-			p.logger.Error("worker panicked" , "worker_id" , worker_id , "panic" , r)
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("worker panicked", "worker_id", worker_id, "panic", r)
 		}
 	}()
 
-	p.logger.Info("worker started" , "worker_id" , worker_id)
+	p.logger.Info("worker started", "worker_id", worker_id)
 
 	for {
-		select{
-			case <-ctx.Done() :
-				p.logger.Info("worker stopping" , "worker_id" , worker_id)
-				return
-			case <-time.After(p.pollInterval) :
-				p.poll(ctx,worker_id)
+		select {
+		case <-ctx.Done():
+			p.logger.Info("worker stopping", "worker_id", worker_id)
+			return
+		case <-time.After(p.pollInterval):
+			p.firstPollOnce.Do(func() {
+				elapsedMs := int64(0)
+				if !p.startedAt.IsZero() {
+					elapsedMs = time.Since(p.startedAt).Milliseconds()
+				}
+
+				p.logger.Info("worker first poll attempt",
+					"worker_id", worker_id,
+					"elapsed_ms", elapsedMs,
+					"poll_interval", p.pollInterval.String(),
+				)
+			})
+			p.poll(ctx, worker_id)
 		}
 	}
 }
 
-func (p *Pool) poll(ctx context.Context , worker_id int){
-	sources , err := p.models.Sources.ClaimPending(1)
+func (p *Pool) poll(ctx context.Context, worker_id int) {
+	sources, err := p.models.Sources.ClaimPending(1)
 	if err != nil {
 		p.logger.Error("failed to claim pending sources", "worker_id", worker_id, "error", err)
 		return
 	}
 
-	if len(sources) == 0{
+	if len(sources) == 0 {
 		return
 	}
 
-	for _, source := range sources{
-		p.process(ctx , worker_id , source)
+	p.firstClaimOnce.Do(func() {
+		elapsedMs := int64(0)
+		if !p.startedAt.IsZero() {
+			elapsedMs = time.Since(p.startedAt).Milliseconds()
+		}
+
+		p.logger.Info("worker first successful claim",
+			"worker_id", worker_id,
+			"claimed_sources", len(sources),
+			"elapsed_ms", elapsedMs,
+		)
+	})
+
+	for _, source := range sources {
+		p.process(ctx, worker_id, source)
 	}
 
 }
 
-func (p *Pool) process(ctx context.Context , worker_id int , source *data.Source){
+func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) {
 	p.logger.Info("processing source",
 		"worker_id", worker_id,
 		"source_id", source.ID,
@@ -93,7 +122,7 @@ func (p *Pool) process(ctx context.Context , worker_id int , source *data.Source
 		"type", source.SourceType,
 	)
 
-	err := p.pipeline.ProcessSource(ctx , source)
+	err := p.pipeline.ProcessSource(ctx, source)
 
 	if err != nil {
 		p.logger.Error("failed to update source status",
@@ -108,9 +137,11 @@ func (p *Pool) process(ctx context.Context , worker_id int , source *data.Source
 
 }
 
-func (p *Pool) Shutdown(){
+func (p *Pool) Shutdown() {
 	p.logger.Info("shutting down worker pool ....")
-	p.cancel()
+	if p.cancel != nil {
+		p.cancel()
+	}
 
 	p.wg.Wait()
 

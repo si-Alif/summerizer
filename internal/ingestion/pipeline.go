@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
@@ -16,15 +17,15 @@ import (
 )
 
 type Pipeline struct {
-	fetcher *fetcher.Fetcher
-	chunker *chunker.Chunker
-	models data.Models
-	logger *slog.Logger
+	fetcher  *fetcher.Fetcher
+	chunker  *chunker.Chunker
+	models   data.Models
+	logger   *slog.Logger
 	embedder *embedder.Embedder
 }
 
 var (
-	ErrNoContentToChunk = errors.New("no content extracted")
+	ErrNoContentToChunk  = errors.New("no content extracted")
 	ErrNoChunksGenerated = errors.New("chunker returned no chunks")
 )
 
@@ -36,79 +37,86 @@ func NewPipeline(
 	e *embedder.Embedder,
 ) *Pipeline {
 	return &Pipeline{
-		fetcher: f,
-		chunker: c,
-		models: models,
-		logger: logger,
+		fetcher:  f,
+		chunker:  c,
+		models:   models,
+		logger:   logger,
 		embedder: e,
 	}
 }
 
 type FailureDecision struct {
 	NonRetryable bool
-	Reason string
+	Reason       string
 }
 
 // Process runs the full ingestion pipeline for a single source.
 //
 // Flow:
-//   1. fetch  — download HTML from source URL
-//   2. clean  — extract section-aware content blocks from HTML
-//   3. chunk  — split blocks into token-sized chunks with overlap
-//   4. store  — delete old chunks (if re-ingesting), bulk insert new ones
+//  1. fetch  — download HTML from source URL
+//  2. clean  — extract section-aware content blocks from HTML
+//  3. chunk  — split blocks into token-sized chunks with overlap
+//  4. store  — delete old chunks (if re-ingesting), bulk insert new ones
 //
 // On error at any step:
 //   - source.status = "failed"
 //   - source.step_error = error message
 //   - source.current_step = the step that failed
 //   - retry_count is incremented (handled by caller/worker)
-func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error {
-	log := p.logger.With("source_id", source.ID , "url" , source.URL)
+func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error {
+	log := p.logger.With("source_id", source.ID, "url", source.URL)
+	pipelineStartedAt := time.Now()
 
 	log.Info("Starting ingestion pipeline")
 
 	// Step 1: Fetch
 	log.Info("Fetching content")
 
-	err := p.models.Sources.UpdateStatus(source.ID , "ingesting" , "fetch")
+	err := p.models.Sources.UpdateStatus(source.ID, "ingesting", "fetch")
 	if err != nil {
-		p.failSource(source.ID , "fetch" , err)
+		p.failSource(source.ID, "fetch", err)
 		return fmt.Errorf("update step to fetch for source %d: %w", source.ID, err)
 	}
 
+	fetchStartedAt := time.Now()
 	rawContent, err := p.fetcher.Fetch(source.URL)
 	if err != nil {
-		p.failSource(source.ID , "fetch" , err)
+		p.failSource(source.ID, "fetch", err)
 		return fmt.Errorf("fetching content: %w", err)
 	}
 
-	log.Info("pipeline: fetched", "title", rawContent.Title, "chars", len(rawContent.TextContent))
+	log.Info("pipeline: fetched",
+		"title", rawContent.Title,
+		"chars", len(rawContent.TextContent),
+		"duration_ms", time.Since(fetchStartedAt).Milliseconds(),
+	)
 
 	// Step 2: Clean
 	log.Info("Cleaning content")
 
-	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "clean")
+	cleanStartedAt := time.Now()
+	err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "clean")
 
 	if err != nil {
 		err := fmt.Errorf("update step to clean for source %d: %w", source.ID, err)
-		p.failSource(source.ID , "clean" , err)
+		p.failSource(source.ID, "clean", err)
 		return err
 	}
 
 	blocks, err := cleaner.ExtractBlocks(rawContent.HTMLContent)
 
-	if err != nil || len(blocks) ==0 {
+	if err != nil || len(blocks) == 0 {
 		switch {
 		case err != nil:
 			log.Warn("pipeline: HTML extraction failed, falling back to plain text", "error", err)
-		default :
+		default:
 			log.Warn("pipeline: HTML extraction returned no blocks, falling back to plain text")
 		}
 
 		blocks = cleaner.FromPlainText(rawContent.TextContent)
 	}
 
-	if len(blocks) == 0{
+	if len(blocks) == 0 {
 		p.failSource(source.ID, "clean", ErrNoContentToChunk)
 		return fmt.Errorf("clean failed: %w", ErrNoContentToChunk)
 	}
@@ -118,24 +126,28 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 		blocks = cleaner.FromPlainText(rawContent.TextContent)
 	}
 
-	log.Info("pipeline: cleaned", "blocks", len(blocks))
+	log.Info("pipeline: cleaned",
+		"blocks", len(blocks),
+		"duration_ms", time.Since(cleanStartedAt).Milliseconds(),
+	)
 
 	// --- Step 3: CHUNK ---
-  log.Info("pipeline: chunking")
+	log.Info("pipeline: chunking")
 
-	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "chunk")
+	chunkStartedAt := time.Now()
+	err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "chunk")
 
 	if err != nil {
 		err := fmt.Errorf("update step to chunk for source %d: %w", source.ID, err)
-		p.failSource(source.ID , "chunk" , err)
+		p.failSource(source.ID, "chunk", err)
 		return err
 	}
 
-	chunks  , err := p.chunker.ChunkContent(blocks , rawContent.Title , source.URL)
+	chunks, err := p.chunker.ChunkContent(blocks, rawContent.Title, source.URL)
 
 	if err != nil {
-		p.failSource(source.ID , "chunk" , err)
-		return fmt.Errorf("chunking failed: %w" , err)
+		p.failSource(source.ID, "chunk", err)
+		return fmt.Errorf("chunking failed: %w", err)
 	}
 
 	if len(chunks) == 0 {
@@ -143,206 +155,214 @@ func (p *Pipeline) ProcessSource(ctx context.Context ,source *data.Source) error
 		return fmt.Errorf("chunking failed: no chunks generated")
 	}
 
-	log.Info("pipeline: chunked", "chunks", len(chunks))
+	log.Info("pipeline: chunked",
+		"chunks", len(chunks),
+		"duration_ms", time.Since(chunkStartedAt).Milliseconds(),
+	)
 
 	// --- Step 4: STORE ---
 	log.Info("pipeline: storing chunks")
 
-	err = p.models.Sources.UpdateStatus(source.ID , "ingesting" , "store")
+	storeStartedAt := time.Now()
+	err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "store")
 
 	if err != nil {
-		p.failSource(source.ID , "store" , err)
+		p.failSource(source.ID, "store", err)
 		return fmt.Errorf("update step to store for source %d: %w", source.ID, err)
 	}
 
-	dataChunks := make([]*data.Chunk , len(chunks))
+	dataChunks := make([]*data.Chunk, len(chunks))
 
-	for i , chunk := range chunks {
-		metadata , err := json.Marshal(chunk.Metadata)
+	for i, chunk := range chunks {
+		metadata, err := json.Marshal(chunk.Metadata)
 
 		if err != nil {
 			metadata = []byte("{}")
 		}
 
 		dataChunks[i] = &data.Chunk{
-			SourceID: source.ID,
+			SourceID:   source.ID,
 			ChunkIndex: chunk.Index,
-			Content: chunk.Content,
+			Content:    chunk.Content,
 			TokenCount: chunk.TokenCount,
-			Metadata: metadata,
+			Metadata:   metadata,
 		}
 	}
 
 	err = p.models.Chunks.DeleteBySourceID(source.ID)
 
 	if err != nil {
-		p.failSource(source.ID , "store" , err)
-		return fmt.Errorf("deleting old chunks: %w" , err)
+		p.failSource(source.ID, "store", err)
+		return fmt.Errorf("deleting old chunks: %w", err)
 	}
 
 	err = p.models.Chunks.BulkInsert(dataChunks)
 
 	if err != nil {
-		p.failSource(source.ID , "store" , err)
-		return fmt.Errorf("bulk inserting chunks: %w" , err)
+		p.failSource(source.ID, "store", err)
+		return fmt.Errorf("bulk inserting chunks: %w", err)
 	}
 
-	log.Info("pipeline: stored chunks successfully" , "chunks_stored" , len(chunks))
+	log.Info("pipeline: stored chunks successfully",
+		"chunks_stored", len(chunks),
+		"duration_ms", time.Since(storeStartedAt).Milliseconds(),
+	)
 
 	// Step 5: EMBED
-	contents := make([]string , len(dataChunks))
+	contents := make([]string, len(dataChunks))
 
-	for i , chunk := range dataChunks {
+	for i, chunk := range dataChunks {
 		contents[i] = chunk.Content
 	}
 
-	embeddings , err := p.embedder.GetEmbeddings(ctx , contents)
+	embedStartedAt := time.Now()
+	embeddings, err := p.embedder.GetEmbeddings(ctx, contents)
 
 	if err != nil {
-	    p.failSource(source.ID, "embed", err)
-	    return fmt.Errorf("embedding failed: %w", err)
+		p.failSource(source.ID, "embed", err)
+		return fmt.Errorf("embedding failed: %w", err)
 	}
 
-	chunkIDs := make([]int64 , len(dataChunks))
+	chunkIDs := make([]int64, len(dataChunks))
 
-	for i , chunk := range dataChunks {
+	for i, chunk := range dataChunks {
 		chunkIDs[i] = chunk.ID
 	}
 
-	err = p.models.Chunks.BulkUpdateEmbedding(chunkIDs , embeddings)
+	err = p.models.Chunks.BulkUpdateEmbedding(chunkIDs, embeddings)
 
 	if err != nil {
 		p.failSource(source.ID, "embed", err)
 		return fmt.Errorf("updating chunk embeddings: %w", err)
 	}
 
-	err = p.models.Sources.UpdateStatus(source.ID , "completed" , "embed")
+	err = p.models.Sources.UpdateStatus(source.ID, "completed", "embed")
 
 	if err != nil {
 		return fmt.Errorf("update step to completed for source %d: %w", source.ID, err)
 	}
 
 	log.Info("pipeline: completed",
-    "source_id", source.ID,
-    "chunks_stored", len(dataChunks),
-  )
+		"source_id", source.ID,
+		"chunks_stored", len(dataChunks),
+		"embed_duration_ms", time.Since(embedStartedAt).Milliseconds(),
+		"pipeline_duration_ms", time.Since(pipelineStartedAt).Milliseconds(),
+	)
 
 	return nil
 }
 
-
-func (p *Pipeline) failSource(sourceID int64 , step string , err error) {
+func (p *Pipeline) failSource(sourceID int64, step string, err error) {
 
 	decision := classifyFailure(err)
 
 	var updateErr error
 
 	if decision.NonRetryable {
-		updateErr = p.models.Sources.MarkAsStale(sourceID , step , err.Error())
-	}else{
-		updateErr = p.models.Sources.MarkAsFailed(sourceID , step , err.Error())
+		updateErr = p.models.Sources.MarkAsStale(sourceID, step, err.Error())
+	} else {
+		updateErr = p.models.Sources.MarkAsFailed(sourceID, step, err.Error())
 	}
 
 	if updateErr != nil {
 		p.logger.Error("failed to update source status",
-				"source_id", sourceID,
-				"step", step,
-				"error", updateErr,
-				"original_error", err,
-				"non_retryable", decision.NonRetryable,
-				"reason", decision.Reason,
+			"source_id", sourceID,
+			"step", step,
+			"error", updateErr,
+			"original_error", err,
+			"non_retryable", decision.NonRetryable,
+			"reason", decision.Reason,
 		)
-  }
-
+	}
 
 }
 
-func classifyFailure(err error) FailureDecision{
+func classifyFailure(err error) FailureDecision {
 	if err == nil {
 		return FailureDecision{}
 	}
 
-	if errors.Is(err , fetcher.ErrInvalidURL) ||
-		errors.Is(err , fetcher.ErrEmptyContent) ||
-		errors.Is(err , fetcher.ErrUnexpectedContentType) ||
-		errors.Is(err , embedder.ErrEmptyInput) ||
-		errors.Is(err , ErrNoContentToChunk) ||
-		errors.Is(err , ErrNoChunksGenerated) {
+	if errors.Is(err, fetcher.ErrInvalidURL) ||
+		errors.Is(err, fetcher.ErrEmptyContent) ||
+		errors.Is(err, fetcher.ErrUnexpectedContentType) ||
+		errors.Is(err, embedder.ErrEmptyInput) ||
+		errors.Is(err, ErrNoContentToChunk) ||
+		errors.Is(err, ErrNoChunksGenerated) {
 		return FailureDecision{
 			NonRetryable: true,
-			Reason: "invalid or unprocessable content",
+			Reason:       "invalid or unprocessable content",
 		}
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return FailureDecision{
 			NonRetryable: false,
-			Reason: "context cancellation or timeout",
+			Reason:       "context cancellation or timeout",
 		}
 	}
 
 	var (
 		embedderErr *embedder.EmbeddingErrors
-		networkErr net.Error
-		fetcherErr *fetcher.FetcherErrors
+		networkErr  net.Error
+		fetcherErr  *fetcher.FetcherErrors
 	)
 
 	switch {
-		case errors.As(err, &fetcherErr):
-			if isPermanentHTTPStatus(fetcherErr.StatusCode) {
-				return FailureDecision{
-					NonRetryable: true,
-					Reason: "invalid or unprocessable content",
-				}
-			}else{
-				return FailureDecision{
-					NonRetryable: false,
-					Reason: fmt.Sprintf("temporary error with status code %d", fetcherErr.StatusCode),
-				}
+	case errors.As(err, &fetcherErr):
+		if isPermanentHTTPStatus(fetcherErr.StatusCode) {
+			return FailureDecision{
+				NonRetryable: true,
+				Reason:       "invalid or unprocessable content",
 			}
-		case errors.As(err, &embedderErr):
-			if isPermanentHTTPStatus(embedderErr.StatusCode) {
-				return FailureDecision{
-					NonRetryable: true,
-					Reason: "invalid or unprocessable content",
-				}
-			}else{
-				return FailureDecision{
-					NonRetryable: false,
-					Reason: fmt.Sprintf("temporary error with status code %d", embedderErr.StatusCode),
-				}
-			}
-		case errors.As(err, &networkErr):
-			if networkErr.Timeout() {
-				return FailureDecision{
-					NonRetryable: false,
-					Reason: "network timeout",
-				}
-			}else{
-				return FailureDecision{
-					NonRetryable: false,
-					Reason: "network error",
-				}
-			}
-		default:
+		} else {
 			return FailureDecision{
 				NonRetryable: false,
-				Reason: "unknown error",
+				Reason:       fmt.Sprintf("temporary error with status code %d", fetcherErr.StatusCode),
 			}
+		}
+	case errors.As(err, &embedderErr):
+		if isPermanentHTTPStatus(embedderErr.StatusCode) {
+			return FailureDecision{
+				NonRetryable: true,
+				Reason:       "invalid or unprocessable content",
+			}
+		} else {
+			return FailureDecision{
+				NonRetryable: false,
+				Reason:       fmt.Sprintf("temporary error with status code %d", embedderErr.StatusCode),
+			}
+		}
+	case errors.As(err, &networkErr):
+		if networkErr.Timeout() {
+			return FailureDecision{
+				NonRetryable: false,
+				Reason:       "network timeout",
+			}
+		} else {
+			return FailureDecision{
+				NonRetryable: false,
+				Reason:       "network error",
+			}
+		}
+	default:
+		return FailureDecision{
+			NonRetryable: false,
+			Reason:       "unknown error",
+		}
 	}
 
 }
 
 func isPermanentHTTPStatus(code int) bool {
-    switch code {
-    case 400, 401, 403, 404, 405, 410, 422, 451:
-        return true
-    case 408, 409, 425, 429:
-        return false
-    default:
-        if code >= 500 {
-            return false
-        }
-        return code >= 400 && code < 500
-    }
+	switch code {
+	case 400, 401, 403, 404, 405, 410, 422, 451:
+		return true
+	case 408, 409, 425, 429:
+		return false
+	default:
+		if code >= 500 {
+			return false
+		}
+		return code >= 400 && code < 500
+	}
 }

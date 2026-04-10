@@ -61,6 +61,9 @@ poll-interval ?= 5s
 limiter-rps ?= 2
 limiter-burst ?= 4
 limiter-enabled ?= true
+inline-embedding-enabled ?= true
+async-embedding-enabled ?= false
+dual-write-embedding-jobs ?= false
 
 .PHONY: run/api
 run/api:
@@ -75,12 +78,61 @@ run/api:
 		-poll-interval=${poll-interval} \
 		-limiter-rps=${limiter-rps} \
 		-limiter-burst=${limiter-burst} \
-		-limiter-enabled=${limiter-enabled}\
+		-limiter-enabled=${limiter-enabled} \
 		-smtp-host=${SMTP_HOST} \
 		-smtp-port=${SMTP_PORT} \
 		-smtp-username=${SMTP_USERNAME} \
 		-smtp-password=${SMTP_PASSWORD} \
-		-smtp-sender=${SMTP_SENDER}
+		-smtp-sender=${SMTP_SENDER} \
+		-inline-embedding-enabled=${inline-embedding-enabled} \
+		-async-embedding-enabled=${async-embedding-enabled} \
+		-dual-write-embedding-jobs=${dual-write-embedding-jobs}
+
+## phase0/run/api : run API and tee logs into tmp/phase0 for baseline captures
+.PHONY: phase0/run/api
+phase0/run/api:
+	@mkdir -p ./tmp/phase0
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	log_file=./tmp/phase0/$${ts}-api.log; \
+	echo "Running API with phase0 logging -> $$log_file"; \
+	go run ./cmd/api \
+		-port=${port} \
+		-env=${env} \
+		-db-dsn=${SUMMERIZER_DB_DSN} \
+		-db-max-open-conns=${db-max-open-conns} \
+		-db-max-idle-conns=${db-max-idle-conns} \
+		-db-max-idle-time=${db-max-idle-time} \
+		-worker-count=${worker-count} \
+		-poll-interval=${poll-interval} \
+		-limiter-rps=${limiter-rps} \
+		-limiter-burst=${limiter-burst} \
+		-limiter-enabled=${limiter-enabled} \
+		-smtp-host=${SMTP_HOST} \
+		-smtp-port=${SMTP_PORT} \
+		-smtp-username=${SMTP_USERNAME} \
+		-smtp-password=${SMTP_PASSWORD} \
+		-smtp-sender=${SMTP_SENDER} \
+		-inline-embedding-enabled=${inline-embedding-enabled} \
+		-async-embedding-enabled=${async-embedding-enabled} \
+		-dual-write-embedding-jobs=${dual-write-embedding-jobs} 2>&1 | tee $$log_file
+
+## phase0/snapshot : capture DB baseline snapshot into tmp/phase0
+.PHONY: phase0/snapshot
+phase0/snapshot:
+	@mkdir -p ./tmp/phase0
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	out_file=./tmp/phase0/$${ts}-db-snapshot.txt; \
+	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase0/snapshot.sql > $$out_file; \
+	echo "Phase0 DB snapshot written -> $$out_file"
+
+## phase0/extract/logs log=./tmp/phase0/<file>.log : extract key baseline lines from API logs
+.PHONY: phase0/extract/logs
+phase0/extract/logs:
+	@if [ -z "$(log)" ]; then \
+		echo "Usage: make phase0/extract/logs log=./tmp/phase0/<file>.log"; \
+		exit 1; \
+	fi
+	@grep -E "startup phase complete|startup complete|worker first poll attempt|worker first successful claim|pipeline: fetched|pipeline: cleaned|pipeline: chunked|pipeline: stored chunks successfully|pipeline: completed|shutting down server|worker pool stopped" "$(log)" | cat
 
 
 ## db/psql : connect to the Greenlight database using psql

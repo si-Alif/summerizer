@@ -36,37 +36,41 @@ type config struct {
 		maxIdleConns int
 		maxIdleTime  time.Duration
 	}
-	worker_pool struct{
-		worker_count int
+	worker_pool struct {
+		worker_count  int
 		poll_interval time.Duration
 	}
-	limiter struct{
-		rps float64
-		burst int
+	limiter struct {
+		rps     float64
+		burst   int
 		enabled bool
 	}
-	smtp struct{
-		host string
-		port int
+	smtp struct {
+		host     string
+		port     int
 		username string
 		password string
-		sender string
+		sender   string
+	}
+	rollout struct {
+		inline_embedding_enabled  bool
+		async_embedding_enabled   bool
+		dual_write_embedding_jobs bool
 	}
 }
 
-
-
 type application struct {
-	config config
-	logger *slog.Logger
-	models data.Models
+	config  config
+	logger  *slog.Logger
+	models  data.Models
 	workers *worker.Pool
 	service *search.Service
-	mailer *mailer.Mailer
-	wg sync.WaitGroup
+	mailer  *mailer.Mailer
+	wg      sync.WaitGroup
 }
 
 func main() {
+	processStartedAt := time.Now()
 
 	var cfg config
 
@@ -94,68 +98,120 @@ func main() {
 	flag.StringVar(&cfg.smtp.username, "smtp-username", "", "SMTP server username")
 	flag.StringVar(&cfg.smtp.password, "smtp-password", "", "SMTP server password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "", "Email address of the sender")
+	flag.BoolVar(&cfg.rollout.inline_embedding_enabled, "inline-embedding-enabled", true, "Run embedding inline in ingestion pipeline")
+	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", false, "Enable async embedding workflow (requires queue worker)")
+	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Enqueue embedding jobs while still running inline embedding")
 
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	// open a database connection pool, verify connectivity, and handle any errors
+	if !cfg.rollout.inline_embedding_enabled {
+		logger.Error("invalid rollout configuration",
+			"reason", "inline embedding cannot be disabled before async embedding worker is implemented",
+		)
+		os.Exit(1)
+	}
+
+	if cfg.rollout.async_embedding_enabled || cfg.rollout.dual_write_embedding_jobs {
+		logger.Warn("async embedding rollout flags enabled but queue path is not implemented yet; running inline embedding only",
+			"async_embedding_enabled", cfg.rollout.async_embedding_enabled,
+			"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
+		)
+	}
+
+	logStartupPhase := func(phase string, startedAt time.Time) {
+		logger.Info("startup phase complete",
+			"phase", phase,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
+	}
+
+	openDBStartedAt := time.Now()
 	db, err := openDB(cfg)
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
 	defer db.Close()
+	logStartupPhase("open_db", openDBStartedAt)
 
 	logger.Info("database connection pool established")
 
+	modelsStartedAt := time.Now()
 	models := data.NewModels(db)
+	logStartupPhase("init_models", modelsStartedAt)
 
-	mailer , err := mailer.NewMailer(cfg.smtp.host , cfg.smtp.port , cfg.smtp.username , cfg.smtp.password , cfg.smtp.sender)
+	mailerStartedAt := time.Now()
+	mailerSvc, err := mailer.NewMailer(cfg.smtp.host, cfg.smtp.port, cfg.smtp.username, cfg.smtp.password, cfg.smtp.sender)
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
+	logStartupPhase("init_mailer", mailerStartedAt)
 
+	fetcherStartedAt := time.Now()
 	webFetcher := fetcher.NewFetcher()
+	logStartupPhase("init_fetcher", fetcherStartedAt)
 
-	textChunker , err := chunker.New(400 , 1)
+	chunkerStartedAt := time.Now()
+	textChunker, err := chunker.New(400, 1)
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
+	logStartupPhase("init_chunker", chunkerStartedAt)
 
-	embedder := embedder.NewEmbedder("" , "")
+	embedderStartedAt := time.Now()
+	embedderClient := embedder.NewEmbedder("", "")
+	logStartupPhase("init_embedder", embedderStartedAt)
 
-	pipeline := ingestion.NewPipeline(models , logger , webFetcher , textChunker , embedder)
+	pipelineStartedAt := time.Now()
+	pipeline := ingestion.NewPipeline(models, logger, webFetcher, textChunker, embedderClient)
+	logStartupPhase("init_pipeline", pipelineStartedAt)
 
+	workerPoolStartedAt := time.Now()
+	workerPool := worker.NewPool(models, cfg.worker_pool.worker_count, cfg.worker_pool.poll_interval, logger, pipeline)
+	logStartupPhase("init_worker_pool", workerPoolStartedAt)
 
-
-	worker_pool := worker.NewPool(models , cfg.worker_pool.worker_count , cfg.worker_pool.poll_interval , logger , pipeline)
-
-	// llmClientOllama := ollama.NewOllamaModel("" , "")
-	llmClientHF, err := huggingface.NewHFModel("" , "")
+	llmStartedAt := time.Now()
+	llmClientHF, err := huggingface.NewHFModel("", "")
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
+	logStartupPhase("init_llm", llmStartedAt)
 
-	searchService := search.NewService(embedder , models , llmClientHF)
+	searchStartedAt := time.Now()
+	searchService := search.NewService(embedderClient, models, llmClientHF)
+	logStartupPhase("init_search_service", searchStartedAt)
 
+	appInitStartedAt := time.Now()
 	app := application{
-		config: cfg,
-		logger: logger,
-		models: models,
-		workers: worker_pool,
+		config:  cfg,
+		logger:  logger,
+		models:  models,
+		workers: workerPool,
 		service: searchService,
-		mailer : mailer,
+		mailer:  mailerSvc,
 	}
+	logStartupPhase("init_application", appInitStartedAt)
 
+	workerStartStartedAt := time.Now()
 	app.workers.Start(context.Background())
+	logStartupPhase("start_workers", workerStartStartedAt)
+
+	logger.Info("startup complete",
+		"duration_ms", time.Since(processStartedAt).Milliseconds(),
+		"worker_count", cfg.worker_pool.worker_count,
+		"poll_interval", cfg.worker_pool.poll_interval.String(),
+		"inline_embedding_enabled", cfg.rollout.inline_embedding_enabled,
+		"async_embedding_enabled", cfg.rollout.async_embedding_enabled,
+		"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
+	)
 
 	err = app.serve()
 
-	// if any error happens in the codebase during , then it logs the error and the process exits
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
