@@ -18,6 +18,9 @@ type Pool struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	pipeline       *ingestion.Pipeline
+	sourceTimeout  time.Duration
+	reclaimInterval time.Duration
+	stuckSourceThreshold time.Duration
 	startedAt      time.Time
 	firstPollOnce  sync.Once
 	firstClaimOnce sync.Once
@@ -29,6 +32,9 @@ func NewPool(
 	pollInterval time.Duration,
 	logger *slog.Logger,
 	pipeline *ingestion.Pipeline,
+	sourceTimeout time.Duration,
+	reclaimInterval time.Duration,
+	stuckSourceThreshold time.Duration,
 ) *Pool {
 	return &Pool{
 		workerCount:  workerCount,
@@ -36,6 +42,9 @@ func NewPool(
 		models:       data,
 		logger:       logger,
 		pipeline:     pipeline,
+		sourceTimeout:  sourceTimeout,
+		reclaimInterval: reclaimInterval,
+		stuckSourceThreshold: stuckSourceThreshold,
 	}
 }
 

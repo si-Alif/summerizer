@@ -39,6 +39,9 @@ type config struct {
 	worker_pool struct {
 		worker_count  int
 		poll_interval time.Duration
+		source_timeout time.Duration
+		reclaim_interval time.Duration
+		stuck_source_threshold time.Duration
 	}
 	limiter struct {
 		rps     float64
@@ -86,6 +89,9 @@ func main() {
 	// worker pool settings
 	flag.IntVar(&cfg.worker_pool.worker_count, "worker-count", 10, "Number of worker goroutines")
 	flag.DurationVar(&cfg.worker_pool.poll_interval, "poll-interval", 5*time.Second, "Interval between polls for pending sources")
+	flag.DurationVar(&cfg.worker_pool.source_timeout, "source-timeout", 90*time.Second, "Timeout for processing a single source")
+	flag.DurationVar(&cfg.worker_pool.reclaim_interval, "reclaim-interval", 1*time.Minute, "Interval between reclaiming stale sources")
+	flag.DurationVar(&cfg.worker_pool.stuck_source_threshold, "stuck-source-threshold", 10*time.Minute, "Threshold for considering a source as stuck")
 
 	// rate limiter settings
 	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
@@ -171,7 +177,7 @@ func main() {
 	logStartupPhase("init_pipeline", pipelineStartedAt)
 
 	workerPoolStartedAt := time.Now()
-	workerPool := worker.NewPool(models, cfg.worker_pool.worker_count, cfg.worker_pool.poll_interval, logger, pipeline)
+	workerPool := worker.NewPool(models, cfg.worker_pool.worker_count, cfg.worker_pool.poll_interval, logger, pipeline , cfg.worker_pool.source_timeout, cfg.worker_pool.reclaim_interval, cfg.worker_pool.stuck_source_threshold)
 	logStartupPhase("init_worker_pool", workerPoolStartedAt)
 
 	llmStartedAt := time.Now()
