@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -77,15 +78,21 @@ func NewFetcher() *Fetcher {
 }
 
 
-func (f *Fetcher) Fetch(rawURL string) (*RawContent, error) {
+func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*RawContent, error) {
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || (parsedURL.Scheme == "" && parsedURL.Host == "") {
 		return nil, &FetcherErrors{URL: rawURL, Err: ErrInvalidURL , StatusCode: http.StatusBadRequest}
 	}
 
-	resp, err := f.httpClient.Get(rawURL)
+	req, err := http.NewRequestWithContext(ctx , http.MethodGet , parsedURL.String() , nil)
 
+	if err != nil {
+		return nil, &FetcherErrors{URL: rawURL, Err: errors.Join(ErrFetchFailed, err), StatusCode: http.StatusBadRequest}
+	}
+
+	resp , err := f.httpClient.Do(req)
+	
 	if err != nil {
 		return nil, &FetcherErrors{URL: rawURL, Err: errors.Join(ErrFetchFailed, err), StatusCode: http.StatusServiceUnavailable}
 	}

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -53,10 +54,41 @@ func (p *Pool) Start(ctx context.Context) {
 	ctx, p.cancel = context.WithCancel(ctx)
 	p.startedAt = time.Now()
 
+	go p.reclaimStuckSources(ctx)
+
 	for i := 0; i < p.workerCount; i++ {
 		p.wg.Add(1)
 		go p.run(ctx, i)
 	}
+}
+
+func (p *Pool) reclaimStuckSources(ctx context.Context) {
+	// ticker.NewTicker(t) ticks after a certain amount of time(t) continuously
+	// it returns a channel that can be used to receive time at each tick .
+	// we can use that channel to trigger the reclaiming of stuck sources at regular intervals defined by p.reclaimInterval.
+	ticker := time.NewTicker(p.reclaimInterval)
+
+	// to stop the ticker use ticker.Stop()
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <- ticker.C :
+			recoveryCount , err := p.models.Sources.ReclaimStuckAtIngesting(p.stuckSourceThreshold)
+			if err != nil {
+				p.logger.Error("failed to reclaim stuck sources", "error", err)
+				continue
+			}
+			if recoveryCount > 0 {
+				p.logger.Info("reclaimed stuck sources", "count", recoveryCount)
+			}
+		}
+	}
+
+
+
 }
 
 func (p *Pool) run(ctx context.Context, worker_id int) {
@@ -124,6 +156,10 @@ func (p *Pool) poll(ctx context.Context, worker_id int) {
 }
 
 func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) {
+
+	sourceIngestionCtx ,  cancel := context.WithTimeout(ctx , p.sourceTimeout)
+	defer cancel()
+
 	p.logger.Info("processing source",
 		"worker_id", worker_id,
 		"source_id", source.ID,
@@ -131,9 +167,16 @@ func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) 
 		"type", source.SourceType,
 	)
 
-	err := p.pipeline.ProcessSource(ctx, source)
+	err := p.pipeline.ProcessSource(sourceIngestionCtx, source)
 
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			p.logger.Warn("source processing timed out",
+				"worker_id", worker_id,
+				"source_id", source.ID,
+				"timeout", p.sourceTimeout.String(),
+			)
+		}
 		p.logger.Error("failed to update source status",
 			"worker_id", worker_id,
 			"source_id", source.ID,

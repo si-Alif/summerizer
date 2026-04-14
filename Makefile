@@ -64,6 +64,9 @@ limiter-enabled ?= true
 inline-embedding-enabled ?= true
 async-embedding-enabled ?= false
 dual-write-embedding-jobs ?= false
+source_timeout ?= 90s
+reclaim_interval ?= 10s
+stuck_source_threshold ?= 10m
 
 .PHONY: run/api
 run/api:
@@ -112,6 +115,9 @@ phase0/run/api:
 		-smtp-username=${SMTP_USERNAME} \
 		-smtp-password=${SMTP_PASSWORD} \
 		-smtp-sender=${SMTP_SENDER} \
+		-source-timeout=${source_timeout} \
+		-reclaim-interval=${reclaim_interval} \
+		-stuck-source-threshold=${stuck_source_threshold} \
 		-inline-embedding-enabled=${inline-embedding-enabled} \
 		-async-embedding-enabled=${async-embedding-enabled} \
 		-dual-write-embedding-jobs=${dual-write-embedding-jobs} 2>&1 | tee $$log_file

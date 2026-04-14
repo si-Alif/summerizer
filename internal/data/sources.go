@@ -473,6 +473,44 @@ func (m SourceModel) UpdateStatus(id int64, status string, currentStep string) e
 }
 
 
+func (m SourceModel) ReclaimStuckAtIngesting(threshold time.Duration) (int64, error) {
+	query := `
+	WITH stuck_sources AS (
+	SELECT
+		id ,
+		COALESCE(retry_count, 0) + 1 AS new_retry_count
+	FROM sources
+	WHERE status = 'ingesting'
+	AND updated_at < now() - $1 * INTERVAL '1 second'
+	)
+	UPDATE sources AS s
+	SET
+		retry_count = ss.new_retry_count,
+		status = CASE
+			WHEN ss.new_retry_count >=5 THEN 'stale'
+			ELSE 'failed'
+		END,
+		next_retry_at = CASE
+			WHEN ss.new_retry_count >=5 THEN NULL
+			ELSE now()
+		END,
+		step_error = CONCAT('auto-recovered stuck ingesting at step=', COALESCE(current_step, 'unknown')),
+    version = version + 1
+	FROM stuck_sources AS ss
+	WHERE s.id = ss.id
+	`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result, err := m.DB.ExecContext(ctx, query, int(threshold.Seconds()))
+	if err != nil {
+		return 0, err
+	}
+
+	return  result.RowsAffected()
+}
+
 func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
 	query := `
 	UPDATE sources

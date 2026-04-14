@@ -1,6 +1,7 @@
 package cleaner
 
 import (
+	"context"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -46,7 +47,7 @@ var IgnoredTags = map[string]bool{
 	"header": true,
 }
 
-func ExtractBlocks(cleanedHTML string) ([]ContentBlock, error) {
+func ExtractBlocks(ctx context.Context , cleanedHTML string) ([]ContentBlock, error) {
 	reader := strings.NewReader(cleanedHTML)
 
 	parsedHTML, err := html.Parse(reader)

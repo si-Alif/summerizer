@@ -63,6 +63,7 @@ type FailureDecision struct {
 //   - source.step_error = error message
 //   - source.current_step = the step that failed
 //   - retry_count is incremented (handled by caller/worker)
+// context : t(s) context window (90s by default) to limit the total processing time for a source, including retries
 func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error {
 	log := p.logger.With("source_id", source.ID, "url", source.URL)
 	pipelineStartedAt := time.Now()
@@ -79,7 +80,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	}
 
 	fetchStartedAt := time.Now()
-	rawContent, err := p.fetcher.Fetch(source.URL)
+	rawContent, err := p.fetcher.Fetch(ctx, source.URL)
 	if err != nil {
 		p.failSource(source.ID, "fetch", err)
 		return fmt.Errorf("fetching content: %w", err)
@@ -103,7 +104,7 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 		return err
 	}
 
-	blocks, err := cleaner.ExtractBlocks(rawContent.HTMLContent)
+	blocks, err := cleaner.ExtractBlocks(ctx, rawContent.HTMLContent)
 
 	if err != nil || len(blocks) == 0 {
 		switch {
