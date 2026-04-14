@@ -108,6 +108,9 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 
 	if err != nil || len(blocks) == 0 {
 		switch {
+		case errors.Is(err , context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			p.failSource(source.ID , "clean" , err)
+			return fmt.Errorf("cleaning content: %w", err)
 		case err != nil:
 			log.Warn("pipeline: HTML extraction failed, falling back to plain text", "error", err)
 		default:
