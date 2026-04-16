@@ -157,7 +157,7 @@ func (p *Pool) poll(ctx context.Context, worker_id int) {
 
 func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) {
 
-	// 90s 
+	// 90s
 	sourceIngestionCtx ,  cancel := context.WithTimeout(ctx , p.sourceTimeout)
 	defer cancel()
 
@@ -177,6 +177,16 @@ func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) 
 				"source_id", source.ID,
 				"timeout", p.sourceTimeout.String(),
 			)
+			return
+		}
+		if errors.Is(err , data.ErrEditConflict){
+			p.logger.Warn(
+				"edit conflict when processing source, likely due to concurrent modification",
+				"worker_id", worker_id,
+				"source_id", source.ID,
+				"error", err,
+			)
+			return
 		}
 		p.logger.Error("failed to update source status",
 			"worker_id", worker_id,

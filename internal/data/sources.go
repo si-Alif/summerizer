@@ -449,7 +449,7 @@ func (m SourceModel) ClaimPending(limit int) ([]*Source, error) {
 }
 
 
-func (m SourceModel) UpdateStatus(id int64, status string, currentStep string) error {
+func (m SourceModel) UpdateStatus(id int64, status string, currentStep string , ver int32) (int32 , error) {
 
 	query := `
 	UPDATE sources
@@ -457,19 +457,25 @@ func (m SourceModel) UpdateStatus(id int64, status string, currentStep string) e
 		status = $1,
 		current_step = $2,
 		version = version + 1
-	WHERE id = $3`
+	WHERE id = $3 AND
+	status = 'ingesting' AND
+	version = $4
+	RETURNING version`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	args := []any{status, currentStep, id}
-	_, err := m.DB.ExecContext(ctx, query, args...)
-
+	var newVer int32
+	args := []any{status, currentStep, id, ver}
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&newVer)
 	if err != nil {
-		return  err
+		if errors.Is(err , sql.ErrNoRows){
+			return 0, ErrEditConflict
+		}
+		return 0 , err
 	}
 
-	return nil
+	return newVer, nil
 }
 
 
@@ -511,7 +517,7 @@ func (m SourceModel) ReclaimStuckAtIngesting(threshold time.Duration) (int64, er
 	return  result.RowsAffected()
 }
 
-func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
+func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string , ver int32)  error {
 	query := `
 	UPDATE sources
 	SET
@@ -521,36 +527,40 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string) error {
 		retry_count = retry_count + 1,
 		next_retry_at = now() + (interval '1 minute' * power(2, retry_count)),
 		version = version + 1
-	WHERE id = $3
-	RETURNING retry_count`
+	WHERE id = $3 AND version = $4 AND status = 'ingesting'
+	RETURNING retry_count , version`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	args := []any{step, errMsg, id}
+	args := []any{step, errMsg, id, ver}
 	var retryCount int
-	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&retryCount)
+	var newVersion int32
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&retryCount, &newVersion)
 
 	if err != nil {
-		return err
+		if errors.Is(err , sql.ErrNoRows){
+			return ErrEditConflict
+		}
+		return  err
 	}
 
 	if retryCount >= 5 {
 		updateQuery := `
 		UPDATE sources
 		SET status = 'stale', version = version + 1
-		WHERE id = $1`
+		WHERE id = $1 AND version = $2`
 
-	_, updateErr := m.DB.ExecContext(ctx, updateQuery, id)
+	_, updateErr := m.DB.ExecContext(ctx, updateQuery, id, newVersion)
 		if updateErr != nil {
-			return fmt.Errorf("marking source as stale after max retries: %w", updateErr)
+			return  fmt.Errorf("marking source as stale after max retries: %w", updateErr)
 		}
 	}
 
-	return  err
+	return err
 }
 
-func (m SourceModel) MarkAsStale(id int64, step string, errMsg string) error {
+func (m SourceModel) MarkAsStale(id int64, step string, errMsg string , ver int32) error {
     query := `
     UPDATE sources
     SET
@@ -560,11 +570,25 @@ func (m SourceModel) MarkAsStale(id int64, step string, errMsg string) error {
         next_retry_at = NULL,
         retry_count = COALESCE(retry_count, 0) + 1,
         version = version + 1
-    WHERE id = $3`
+    WHERE id = $3 AND version = $4 AND status = 'ingesting'`
 
     ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
     defer cancel()
 
-    _, err := m.DB.ExecContext(ctx, query, step, errMsg, id)
-    return err
+    res, err := m.DB.ExecContext(ctx, query, step, errMsg, id, ver)
+
+		if err != nil {
+			if errors.Is(err , sql.ErrNoRows){
+				return ErrEditConflict
+			}
+			return  err
+		}
+
+		rowsAffected , err := res.RowsAffected()
+
+		if rowsAffected == 0 {
+			return ErrEditConflict
+		}
+
+		return  err
 }

@@ -267,7 +267,7 @@ func (f *Fetcher) fetchOnce(ctx context.Context , u *url.URL) (*RawContent, *Fet
 	// url could have been changed during redirects, so we update it to the final URL after fetching the content.
 	finalURL := u.String()
 
-	if resp.Request.URL != nil && resp.Request != nil {
+	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
 
@@ -296,7 +296,7 @@ func (f * Fetcher) shouldRetry(fErr *FetcherErrors) (bool , time.Duration) {
 
 	// context here is the attempt context, if it was canceled or deadline exceeded .
 	if errors.Is(fErr.Err, context.DeadlineExceeded) || errors.Is(fErr.Err, context.Canceled) {
-		return true , 0
+		return false , 0
 	}
 
 	return false , 0
