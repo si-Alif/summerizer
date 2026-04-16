@@ -157,6 +157,7 @@ func (p *Pool) poll(ctx context.Context, worker_id int) {
 
 func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) {
 
+	// 90s 
 	sourceIngestionCtx ,  cancel := context.WithTimeout(ctx , p.sourceTimeout)
 	defer cancel()
 
