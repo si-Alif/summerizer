@@ -63,6 +63,7 @@ type FailureDecision struct {
 //   - source.step_error = error message
 //   - source.current_step = the step that failed
 //   - retry_count is incremented (handled by caller/worker)
+//
 // context : t(s) context window (90s by default) to limit the total processing time for a source, including retries
 func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error {
 	log := p.logger.With("source_id", source.ID, "url", source.URL)
@@ -73,10 +74,10 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	// Step 1: Fetch
 	log.Info("Fetching content")
 
-	newVersion, err := p.models.Sources.UpdateStatus(source.ID, "ingesting", "fetch" , source.Version)
+	newVersion, err := p.models.Sources.UpdateStatus(source.ID, "ingesting", "fetch", source.Version)
 	if err != nil {
-		if errors.Is(err , data.ErrEditConflict){
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to fetch for source %d", source.ID) , data.ErrEditConflict)
+		if errors.Is(err, data.ErrEditConflict) {
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to fetch for source %d", source.ID), data.ErrEditConflict)
 		}
 		p.failSource(source, "fetch", err)
 		return fmt.Errorf("update step to fetch for source %d: %w", source.ID, err)
@@ -103,8 +104,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "clean", source.Version)
 
 	if err != nil {
-		if errors.Is(err , data.ErrEditConflict){
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to clean for source %d", source.ID) , data.ErrEditConflict)
+		if errors.Is(err, data.ErrEditConflict) {
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to clean for source %d", source.ID), data.ErrEditConflict)
 		}
 		err := fmt.Errorf("update step to clean for source %d: %w", source.ID, err)
 		p.failSource(source, "clean", err)
@@ -112,12 +113,12 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	}
 	source.Version = newVersion
 
-	blocks, err := cleaner.ExtractBlocks(ctx, rawContent.HTMLContent)
+	blocks, cleanMethod, err := cleaner.ExtractBlocksWithMethod(ctx, rawContent.HTMLContent)
 
 	if err != nil || len(blocks) == 0 {
 		switch {
-		case errors.Is(err , context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-			p.failSource(source , "clean" , err)
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			p.failSource(source, "clean", err)
 			return fmt.Errorf("cleaning content: %w", err)
 		case err != nil:
 			log.Warn("pipeline: HTML extraction failed, falling back to plain text", "error", err)
@@ -125,6 +126,13 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 			log.Warn("pipeline: HTML extraction returned no blocks, falling back to plain text")
 		}
 
+		cleanMethod = cleaner.MethodPlainText
+		blocks = cleaner.FromPlainText(rawContent.TextContent)
+	}
+
+	if len(blocks) > 2000 {
+		log.Warn("pipeline: extracted a large number of blocks, which may indicate an issue with the HTML structure or extraction logic . Falling back to plain text", "block_count", len(blocks))
+		cleanMethod = cleaner.MethodPlainText
 		blocks = cleaner.FromPlainText(rawContent.TextContent)
 	}
 
@@ -133,12 +141,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 		return fmt.Errorf("clean failed: %w", ErrNoContentToChunk)
 	}
 
-	if len(blocks) > 2000 {
-		log.Warn("pipeline: extracted a large number of blocks, which may indicate an issue with the HTML structure or extraction logic . Falling back to plain text", "block_count", len(blocks))
-		blocks = cleaner.FromPlainText(rawContent.TextContent)
-	}
-
 	log.Info("pipeline: cleaned",
+		"method", cleanMethod,
 		"blocks", len(blocks),
 		"duration_ms", time.Since(cleanStartedAt).Milliseconds(),
 	)
@@ -150,8 +154,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "chunk", source.Version)
 
 	if err != nil {
-		if errors.Is(err , data.ErrEditConflict){
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to chunk for source %d", source.ID) , data.ErrEditConflict)
+		if errors.Is(err, data.ErrEditConflict) {
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to chunk for source %d", source.ID), data.ErrEditConflict)
 		}
 		err := fmt.Errorf("update step to chunk for source %d: %w", source.ID, err)
 		p.failSource(source, "chunk", err)
@@ -183,8 +187,8 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "store", source.Version)
 
 	if err != nil {
-		if errors.Is(err , data.ErrEditConflict){
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to store for source %d", source.ID) , data.ErrEditConflict)
+		if errors.Is(err, data.ErrEditConflict) {
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to store for source %d", source.ID), data.ErrEditConflict)
 		}
 		p.failSource(source, "store", err)
 		return fmt.Errorf("update step to store for source %d: %w", source.ID, err)
@@ -256,12 +260,11 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 		return fmt.Errorf("updating chunk embeddings: %w", err)
 	}
 
-
-	newVersion , err = p.models.Sources.UpdateStatus(source.ID, "completed", "embed" , source.Version)
+	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "completed", "embed", source.Version)
 
 	if err != nil {
-		if errors.Is(err , data.ErrEditConflict){
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to completed for source %d", source.ID) , data.ErrEditConflict)
+		if errors.Is(err, data.ErrEditConflict) {
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to completed for source %d", source.ID), data.ErrEditConflict)
 		}
 		return fmt.Errorf("update step to completed for source %d: %w", source.ID, err)
 	}
@@ -284,13 +287,13 @@ func (p *Pipeline) failSource(source *data.Source, step string, err error) {
 	var updateErr error
 
 	if decision.NonRetryable {
-		updateErr = p.models.Sources.MarkAsStale(source.ID, step, err.Error() , source.Version)
+		updateErr = p.models.Sources.MarkAsStale(source.ID, step, err.Error(), source.Version)
 	} else {
-		updateErr = p.models.Sources.MarkAsFailed(source.ID, step, err.Error() , source.Version)
+		updateErr = p.models.Sources.MarkAsFailed(source.ID, step, err.Error(), source.Version)
 	}
 
 	if updateErr != nil {
-		if errors.Is(updateErr , data.ErrEditConflict){
+		if errors.Is(updateErr, data.ErrEditConflict) {
 			p.logger.Warn(
 				"edit conflict when marking source as failed/stale, likely due to concurrent modification",
 				"source_id", source.ID,

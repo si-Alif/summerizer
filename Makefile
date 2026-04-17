@@ -140,6 +140,15 @@ phase0/extract/logs:
 	fi
 	@grep -E "startup phase complete|startup complete|worker first poll attempt|worker first successful claim|pipeline: fetched|pipeline: cleaned|pipeline: chunked|pipeline: stored chunks successfully|pipeline: completed|shutting down server|worker pool stopped" "$(log)" | cat
 
+## phase0/extract/clean-methods log=./tmp/phase0/<file>.log : summarize markdown/legacy/plain_text method distribution
+.PHONY: phase0/extract/clean-methods
+phase0/extract/clean-methods:
+	@if [ -z "$(log)" ]; then \
+		echo "Usage: make phase0/extract/clean-methods log=./tmp/phase0/<file>.log"; \
+		exit 1; \
+	fi
+	@awk -f ./scripts/phase0/clean_method_distribution.awk "$(log)"
+
 
 ## db/psql : connect to the Greenlight database using psql
 .PHONY: db/psql
