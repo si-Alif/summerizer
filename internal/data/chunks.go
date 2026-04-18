@@ -16,26 +16,26 @@ import (
 const ChunkBulkInsertBatchSize = 500
 
 type Chunk struct {
-	ID           int64  `json:"id"`
-	SourceID      int64  `json:"source_id"`
-	ChunkIndex int    `json:"chunk_index"`
-	Content 	 string `json:"content"`
-	TokenCount int    `json:"token_count"`
-	Embedding  []float64 `json:"-"`
-	Metadata	 json.RawMessage `json:"metadata"`
-	CreatedAt    string `json:"created_at"`
+	ID         int64           `json:"id"`
+	SourceID   int64           `json:"source_id"`
+	ChunkIndex int             `json:"chunk_index"`
+	Content    string          `json:"content"`
+	TokenCount int             `json:"token_count"`
+	Embedding  []float64       `json:"-"`
+	Metadata   json.RawMessage `json:"metadata"`
+	CreatedAt  string          `json:"created_at"`
 }
 
 type ChunkSearchResult struct {
-	ChunkID      int64   `json:"chunk_id"`
-	Content 		string  `json:"content"`
-	TokenCount 	int     `json:"token_count"`
-	Distance 	 float64 `json:"distance"`
-	SourceID      int64   `json:"source_id"`
-	SourceTitle   string  `json:"source_title"`
-	SourceURL     string  `json:"source_url"`
-	ChunkIndex     int     `json:"chunk_index"`
-	Metadata	 json.RawMessage `json:"metadata"`
+	ChunkID     int64           `json:"chunk_id"`
+	Content     string          `json:"content"`
+	TokenCount  int             `json:"token_count"`
+	Distance    float64         `json:"distance"`
+	SourceID    int64           `json:"source_id"`
+	SourceTitle string          `json:"source_title"`
+	SourceURL   string          `json:"source_url"`
+	ChunkIndex  int             `json:"chunk_index"`
+	Metadata    json.RawMessage `json:"metadata"`
 }
 
 func ValidateChunk(v *validator.Validator, chunk *Chunk) {
@@ -45,8 +45,8 @@ func ValidateChunk(v *validator.Validator, chunk *Chunk) {
 	v.Check(validator.NotBlank(chunk.Content), "content", "must be provided")
 	v.Check(len(chunk.Content) <= 50000, "content", "must not be more than 50000 characters")
 
-	v.Check(chunk.TokenCount > 0 , "token_count", "must be greater than 0")
-	v.Check(chunk.TokenCount <= 2000 , "token_count", "must not be more than 10000")
+	v.Check(chunk.TokenCount > 0, "token_count", "must be greater than 0")
+	v.Check(chunk.TokenCount <= 2000, "token_count", "must not be more than 2000")
 }
 
 type ChunkModel struct {
@@ -75,10 +75,10 @@ func (m ChunkModel) BulkInsertBatch(chunks []*Chunk) error {
 
 	chunks_len := len(chunks)
 
-	valueString := make([]string , 0 , chunks_len)
-	args := make([]any , 0 , chunks_len * 5)
+	valueString := make([]string, 0, chunks_len)
+	args := make([]any, 0, chunks_len*5)
 
-	for i , chunk := range chunks {
+	for i, chunk := range chunks {
 		base := i * 5
 		valueString = append(valueString,
 			fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4, base+5),
@@ -86,13 +86,13 @@ func (m ChunkModel) BulkInsertBatch(chunks []*Chunk) error {
 		args = append(args, chunk.SourceID, chunk.ChunkIndex, chunk.Content, chunk.TokenCount, chunk.Metadata)
 	}
 
-	query += strings.Join(valueString , ", ")
+	query += strings.Join(valueString, ", ")
 	query += ` RETURNING id , created_at`
 
-	ctx , cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	rows , err := m.DB.QueryContext(ctx, query, args...)
+	rows, err := m.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("bulk insert chunks: %w", err)
 	}
@@ -112,7 +112,6 @@ func (m ChunkModel) BulkInsertBatch(chunks []*Chunk) error {
 
 	return rows.Err()
 }
-
 
 func (m ChunkModel) DeleteBySourceID(sourceID int64) error {
 	query := `DELETE FROM chunks WHERE source_id = $1`
@@ -178,10 +177,10 @@ func (m ChunkModel) CountBySourceID(sourceID int64) (int, error) {
 	err := m.DB.QueryRowContext(ctx, query, sourceID).Scan(&count)
 	if err != nil {
 		switch {
-			case errors.Is(err, sql.ErrNoRows):
-				return 0, ErrRecordNotFound
-			default:
-				return 0, err
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, ErrRecordNotFound
+		default:
+			return 0, err
 		}
 	}
 
@@ -244,7 +243,6 @@ func (m ChunkModel) SearchByVector(collectionID int64, queryVector []float32, li
 	return results, rows.Err()
 }
 
-
 func (m ChunkModel) UpdateEmbedding(chunkID int64, embedding []float32) error {
 	embeddingString := float32SliceToPgVectorString(embedding)
 
@@ -265,11 +263,11 @@ func (m ChunkModel) BulkUpdateEmbedding(chunkIDs []int64, embeddings [][]float32
 	}
 
 	if chunkIDsLen != len(embeddings) {
-		return fmt.Errorf("chunkIDs and embeddings length mismatch: %d vs %d",chunkIDsLen, len(embeddings))
+		return fmt.Errorf("chunkIDs and embeddings length mismatch: %d vs %d", chunkIDsLen, len(embeddings))
 	}
 
 	// execute the updates in a transaction for better performance and atomicity
-	ctx , cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	tx, err := m.DB.BeginTx(ctx, nil)
@@ -280,7 +278,7 @@ func (m ChunkModel) BulkUpdateEmbedding(chunkIDs []int64, embeddings [][]float32
 	defer tx.Rollback() // rollback the transaction if any error occurs
 
 	query := `UPDATE chunks SET embedding = $1::vector WHERE id = $2`
-	stmnt , err := tx.PrepareContext(ctx, query)
+	stmnt, err := tx.PrepareContext(ctx, query)
 
 	if err != nil {
 		return fmt.Errorf("preparing statement for bulk update embedding: %w", err)
@@ -288,7 +286,7 @@ func (m ChunkModel) BulkUpdateEmbedding(chunkIDs []int64, embeddings [][]float32
 
 	defer stmnt.Close()
 
-	for i , chunkID := range chunkIDs {
+	for i, chunkID := range chunkIDs {
 		embeddingString := float32SliceToPgVectorString(embeddings[i])
 		_, err := stmnt.ExecContext(ctx, embeddingString, chunkID)
 		if err != nil {
@@ -296,7 +294,7 @@ func (m ChunkModel) BulkUpdateEmbedding(chunkIDs []int64, embeddings [][]float32
 		}
 	}
 
-	return  tx.Commit()
+	return tx.Commit()
 }
 
 func float32SliceToPgVectorString(embedding []float32) string {
@@ -311,7 +309,7 @@ func float32SliceToPgVectorString(embedding []float32) string {
 		if i > 0 {
 			b.WriteRune(',')
 		}
-		fmt.Fprintf(&b , "%f" , val)
+		fmt.Fprintf(&b, "%f", val)
 	}
 	b.WriteRune(']')
 	return b.String()

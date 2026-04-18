@@ -233,9 +233,14 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 	)
 
 	// Step 5: EMBED
-	contents := make([]string, len(dataChunks))
+	contents := make([]string, len(chunks))
 
-	for i, chunk := range dataChunks {
+	for i, chunk := range chunks {
+		if chunk.EmbedText != "" {
+			contents[i] = chunk.EmbedText
+			continue
+		}
+
 		contents[i] = chunk.Content
 	}
 
