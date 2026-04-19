@@ -13,7 +13,7 @@ import (
 const (
 	defaultEmbeddingModel = "nomic-embed-text"
 	defaultEmbeddingModelBaseURL = "http://localhost:11434"
-	requestTimeout = 60 * time.Second
+	requestTimeout = 500 * time.Second
 )
 
 var (

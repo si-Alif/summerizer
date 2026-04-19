@@ -63,7 +63,7 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 		UserID:      app.GetUserFromSubsequentRequestContext(r).ID,
 		Title:       input.Title,
 		Description: input.Description,
-		Max_Sources: 13,
+		Max_Sources: 15,
 	}
 
 	v := validator.New()

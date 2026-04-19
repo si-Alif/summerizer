@@ -64,7 +64,7 @@ limiter-enabled ?= true
 inline-embedding-enabled ?= true
 async-embedding-enabled ?= false
 dual-write-embedding-jobs ?= false
-source_timeout ?= 90s
+source_timeout ?= 720s
 reclaim_interval ?= 10s
 stuck_source_threshold ?= 10m
 
@@ -87,6 +87,9 @@ run/api:
 		-smtp-username=${SMTP_USERNAME} \
 		-smtp-password=${SMTP_PASSWORD} \
 		-smtp-sender=${SMTP_SENDER} \
+		-source-timeout=${source_timeout} \
+		-reclaim-interval=${reclaim_interval} \
+		-stuck-source-threshold=${stuck_source_threshold} \
 		-inline-embedding-enabled=${inline-embedding-enabled} \
 		-async-embedding-enabled=${async-embedding-enabled} \
 		-dual-write-embedding-jobs=${dual-write-embedding-jobs}
@@ -130,6 +133,15 @@ phase0/snapshot:
 	out_file=./tmp/phase0/$${ts}-db-snapshot.txt; \
 	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase0/snapshot.sql > $$out_file; \
 	echo "Phase0 DB snapshot written -> $$out_file"
+
+## phase1/snapshot : capture DB baseline snapshot into tmp/phase0
+.PHONY: phase1/snapshot
+phase1/snapshot:
+	@mkdir -p ./tmp/phase1
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	out_file=./tmp/phase1/$${ts}-db-snapshot.txt; \
+	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase1/snapshot.sql > $$out_file; \
+	echo "Phase1 DB snapshot written -> $$out_file"
 
 ## phase0/extract/logs log=./tmp/phase0/<file>.log : extract key baseline lines from API logs
 .PHONY: phase0/extract/logs
