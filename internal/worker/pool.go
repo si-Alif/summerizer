@@ -12,19 +12,19 @@ import (
 )
 
 type Pool struct {
-	workerCount    int
-	pollInterval   time.Duration
-	models         data.Models
-	logger         *slog.Logger
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	pipeline       *ingestion.Pipeline
-	sourceTimeout  time.Duration
-	reclaimInterval time.Duration
+	workerCount          int
+	pollInterval         time.Duration
+	models               data.Models
+	logger               *slog.Logger
+	cancel               context.CancelFunc
+	wg                   sync.WaitGroup
+	pipeline             *ingestion.Pipeline
+	sourceTimeout        time.Duration
+	reclaimInterval      time.Duration
 	stuckSourceThreshold time.Duration
-	startedAt      time.Time
-	firstPollOnce  sync.Once
-	firstClaimOnce sync.Once
+	startedAt            time.Time
+	firstPollOnce        sync.Once
+	firstClaimOnce       sync.Once
 }
 
 func NewPool(
@@ -38,13 +38,13 @@ func NewPool(
 	stuckSourceThreshold time.Duration,
 ) *Pool {
 	return &Pool{
-		workerCount:  workerCount,
-		pollInterval: pollInterval,
-		models:       data,
-		logger:       logger,
-		pipeline:     pipeline,
-		sourceTimeout:  sourceTimeout,
-		reclaimInterval: reclaimInterval,
+		workerCount:          workerCount,
+		pollInterval:         pollInterval,
+		models:               data,
+		logger:               logger,
+		pipeline:             pipeline,
+		sourceTimeout:        sourceTimeout,
+		reclaimInterval:      reclaimInterval,
 		stuckSourceThreshold: stuckSourceThreshold,
 	}
 }
@@ -75,8 +75,8 @@ func (p *Pool) reclaimStuckSources(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <- ticker.C :
-			recoveryCount , err := p.models.Sources.ReclaimStuckAtIngesting(p.stuckSourceThreshold)
+		case <-ticker.C:
+			recoveryCount, err := p.models.Sources.ReclaimStuckAtIngesting(p.stuckSourceThreshold)
 			if err != nil {
 				p.logger.Error("failed to reclaim stuck sources", "error", err)
 				continue
@@ -86,8 +86,6 @@ func (p *Pool) reclaimStuckSources(ctx context.Context) {
 			}
 		}
 	}
-
-
 
 }
 
@@ -158,7 +156,7 @@ func (p *Pool) poll(ctx context.Context, worker_id int) {
 func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) {
 
 	// 90s
-	sourceIngestionCtx ,  cancel := context.WithTimeout(ctx , p.sourceTimeout)
+	sourceIngestionCtx, cancel := context.WithTimeout(ctx, p.sourceTimeout)
 	defer cancel()
 
 	p.logger.Info("processing source",
@@ -179,7 +177,7 @@ func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) 
 			)
 			return
 		}
-		if errors.Is(err , data.ErrEditConflict){
+		if errors.Is(err, data.ErrEditConflict) {
 			p.logger.Warn(
 				"edit conflict when processing source, likely due to concurrent modification",
 				"worker_id", worker_id,
@@ -196,7 +194,7 @@ func (p *Pool) process(ctx context.Context, worker_id int, source *data.Source) 
 		return
 	}
 
-	p.logger.Info("source completed", "worker_id", worker_id, "source_id", source.ID)
+	p.logger.Info("source ingestion staged for embedding", "worker_id", worker_id, "source_id", source.ID)
 
 }
 

@@ -56,17 +56,23 @@ env ?= development
 db-max-open-conns ?= 25
 db-max-idle-conns ?= 25
 db-max-idle-time ?= 15m
-worker-count ?= 10
+worker-count ?= 5
 poll-interval ?= 5s
 limiter-rps ?= 2
 limiter-burst ?= 4
 limiter-enabled ?= true
-inline-embedding-enabled ?= true
-async-embedding-enabled ?= false
+inline-embedding-enabled ?= false
+async-embedding-enabled ?= true
 dual-write-embedding-jobs ?= false
 source_timeout ?= 720s
 reclaim_interval ?= 10s
 stuck_source_threshold ?= 10m
+embedding-worker-count ?= 4
+embedding-poll-interval ?= 2s
+embedding-job-timeout ?= 300s
+embedding-reclaim-interval ?= 60s
+embedding-stuck-job-threshold ?= 10m
+embedding-batch-size ?= 32
 
 .PHONY: run/api
 run/api:
@@ -90,6 +96,12 @@ run/api:
 		-source-timeout=${source_timeout} \
 		-reclaim-interval=${reclaim_interval} \
 		-stuck-source-threshold=${stuck_source_threshold} \
+		-embedding-worker-count=${embedding-worker-count} \
+		-embedding-poll-interval=${embedding-poll-interval} \
+		-embedding-job-timeout=${embedding-job-timeout} \
+		-embedding-reclaim-interval=${embedding-reclaim-interval} \
+		-embedding-stuck-job-threshold=${embedding-stuck-job-threshold} \
+		-embedding-batch-size=${embedding-batch-size} \
 		-inline-embedding-enabled=${inline-embedding-enabled} \
 		-async-embedding-enabled=${async-embedding-enabled} \
 		-dual-write-embedding-jobs=${dual-write-embedding-jobs}
@@ -121,6 +133,12 @@ phase0/run/api:
 		-source-timeout=${source_timeout} \
 		-reclaim-interval=${reclaim_interval} \
 		-stuck-source-threshold=${stuck_source_threshold} \
+		-embedding-worker-count=${embedding-worker-count} \
+		-embedding-poll-interval=${embedding-poll-interval} \
+		-embedding-job-timeout=${embedding-job-timeout} \
+		-embedding-reclaim-interval=${embedding-reclaim-interval} \
+		-embedding-stuck-job-threshold=${embedding-stuck-job-threshold} \
+		-embedding-batch-size=${embedding-batch-size} \
 		-inline-embedding-enabled=${inline-embedding-enabled} \
 		-async-embedding-enabled=${async-embedding-enabled} \
 		-dual-write-embedding-jobs=${dual-write-embedding-jobs} 2>&1 | tee $$log_file

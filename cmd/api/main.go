@@ -37,11 +37,19 @@ type config struct {
 		maxIdleTime  time.Duration
 	}
 	worker_pool struct {
-		worker_count  int
-		poll_interval time.Duration
-		source_timeout time.Duration
-		reclaim_interval time.Duration
+		worker_count           int
+		poll_interval          time.Duration
+		source_timeout         time.Duration
+		reclaim_interval       time.Duration
 		stuck_source_threshold time.Duration
+	}
+	embedding_pool struct {
+		worker_count        int
+		poll_interval       time.Duration
+		job_timeout         time.Duration
+		reclaim_interval    time.Duration
+		stuck_job_threshold time.Duration
+		batch_size          int
 	}
 	limiter struct {
 		rps     float64
@@ -63,13 +71,14 @@ type config struct {
 }
 
 type application struct {
-	config  config
-	logger  *slog.Logger
-	models  data.Models
-	workers *worker.Pool
-	service *search.Service
-	mailer  *mailer.Mailer
-	wg      sync.WaitGroup
+	config           config
+	logger           *slog.Logger
+	models           data.Models
+	workers          *worker.Pool
+	embeddingWorkers *worker.EmbeddingPool
+	service          *search.Service
+	mailer           *mailer.Mailer
+	wg               sync.WaitGroup
 }
 
 func main() {
@@ -93,6 +102,14 @@ func main() {
 	flag.DurationVar(&cfg.worker_pool.reclaim_interval, "reclaim-interval", 1*time.Minute, "Interval between reclaiming stale sources")
 	flag.DurationVar(&cfg.worker_pool.stuck_source_threshold, "stuck-source-threshold", 10*time.Minute, "Threshold for considering a source as stuck")
 
+	// embedding worker pool settings
+	flag.IntVar(&cfg.embedding_pool.worker_count, "embedding-worker-count", 4, "Number of embedding worker goroutines")
+	flag.DurationVar(&cfg.embedding_pool.poll_interval, "embedding-poll-interval", 2*time.Second, "Interval between polls for pending embedding jobs")
+	flag.DurationVar(&cfg.embedding_pool.job_timeout, "embedding-job-timeout", 5*time.Minute, "Timeout for processing a single embedding job")
+	flag.DurationVar(&cfg.embedding_pool.reclaim_interval, "embedding-reclaim-interval", 1*time.Minute, "Interval between reclaiming stuck embedding jobs")
+	flag.DurationVar(&cfg.embedding_pool.stuck_job_threshold, "embedding-stuck-job-threshold", 10*time.Minute, "Threshold for considering an embedding job as stuck")
+	flag.IntVar(&cfg.embedding_pool.batch_size, "embedding-batch-size", 32, "Target embedding request batch size")
+
 	// rate limiter settings
 	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
 	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter burst size")
@@ -104,26 +121,33 @@ func main() {
 	flag.StringVar(&cfg.smtp.username, "smtp-username", "", "SMTP server username")
 	flag.StringVar(&cfg.smtp.password, "smtp-password", "", "SMTP server password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "", "Email address of the sender")
-	flag.BoolVar(&cfg.rollout.inline_embedding_enabled, "inline-embedding-enabled", true, "Run embedding inline in ingestion pipeline")
-	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", false, "Enable async embedding workflow (requires queue worker)")
-	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Enqueue embedding jobs while still running inline embedding")
+	flag.BoolVar(&cfg.rollout.inline_embedding_enabled, "inline-embedding-enabled", false, "Deprecated: inline embedding path has been removed")
+	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", true, "Enable async embedding workflow (required)")
+	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
 
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	if !cfg.rollout.inline_embedding_enabled {
+	if !cfg.rollout.async_embedding_enabled {
 		logger.Error("invalid rollout configuration",
-			"reason", "inline embedding cannot be disabled before async embedding worker is implemented",
+			"reason", "async embedding must be enabled because ingestion now enqueues embedding jobs",
 		)
 		os.Exit(1)
 	}
 
-	if cfg.rollout.async_embedding_enabled || cfg.rollout.dual_write_embedding_jobs {
-		logger.Warn("async embedding rollout flags enabled but queue path is not implemented yet; running inline embedding only",
-			"async_embedding_enabled", cfg.rollout.async_embedding_enabled,
+	if cfg.rollout.inline_embedding_enabled {
+		logger.Warn("inline embedding flag is deprecated and ignored; pipeline is async-only now",
+			"inline_embedding_enabled", cfg.rollout.inline_embedding_enabled,
+		)
+		cfg.rollout.inline_embedding_enabled = false
+	}
+
+	if cfg.rollout.dual_write_embedding_jobs {
+		logger.Warn("dual-write flag is deprecated and ignored; async queue is the only embedding path now",
 			"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
 		)
+		cfg.rollout.dual_write_embedding_jobs = false
 	}
 
 	logStartupPhase := func(phase string, startedAt time.Time) {
@@ -169,16 +193,40 @@ func main() {
 	logStartupPhase("init_chunker", chunkerStartedAt)
 
 	embedderStartedAt := time.Now()
-	embedderClient := embedder.NewEmbedder("", "")
-	logStartupPhase("init_embedder", embedderStartedAt)
+	searchEmbedderClient := embedder.NewEmbedder("", "", embedder.WithBatchSize(8), embedder.WithKeepAlive("5m"))
+	embeddingWorkerEmbedder := embedder.NewEmbedder("", "", embedder.WithBatchSize(cfg.embedding_pool.batch_size), embedder.WithKeepAlive("30m"))
+	logStartupPhase("init_embedders", embedderStartedAt)
 
 	pipelineStartedAt := time.Now()
-	pipeline := ingestion.NewPipeline(models, logger, webFetcher, textChunker, embedderClient)
+	pipeline := ingestion.NewPipeline(models, logger, webFetcher, textChunker)
 	logStartupPhase("init_pipeline", pipelineStartedAt)
 
 	workerPoolStartedAt := time.Now()
-	workerPool := worker.NewPool(models, cfg.worker_pool.worker_count, cfg.worker_pool.poll_interval, logger, pipeline , cfg.worker_pool.source_timeout, cfg.worker_pool.reclaim_interval, cfg.worker_pool.stuck_source_threshold)
+	workerPool := worker.NewPool(
+		models,
+		cfg.worker_pool.worker_count,
+		cfg.worker_pool.poll_interval,
+		logger,
+		pipeline,
+		cfg.worker_pool.source_timeout,
+		cfg.worker_pool.reclaim_interval,
+		cfg.worker_pool.stuck_source_threshold,
+	)
 	logStartupPhase("init_worker_pool", workerPoolStartedAt)
+
+	embeddingPoolStartedAt := time.Now()
+	embeddingPool := worker.NewEmbeddingPool(
+		models,
+		cfg.embedding_pool.worker_count,
+		cfg.embedding_pool.poll_interval,
+		logger,
+		embeddingWorkerEmbedder,
+		cfg.embedding_pool.job_timeout,
+		cfg.embedding_pool.reclaim_interval,
+		cfg.embedding_pool.stuck_job_threshold,
+		cfg.embedding_pool.batch_size,
+	)
+	logStartupPhase("init_embedding_pool", embeddingPoolStartedAt)
 
 	llmStartedAt := time.Now()
 	llmClientHF, err := huggingface.NewHFModel("", "")
@@ -189,28 +237,36 @@ func main() {
 	logStartupPhase("init_llm", llmStartedAt)
 
 	searchStartedAt := time.Now()
-	searchService := search.NewService(embedderClient, models, llmClientHF)
+	searchService := search.NewService(searchEmbedderClient, models, llmClientHF)
 	logStartupPhase("init_search_service", searchStartedAt)
 
 	appInitStartedAt := time.Now()
 	app := application{
-		config:  cfg,
-		logger:  logger,
-		models:  models,
-		workers: workerPool,
-		service: searchService,
-		mailer:  mailerSvc,
+		config:           cfg,
+		logger:           logger,
+		models:           models,
+		workers:          workerPool,
+		embeddingWorkers: embeddingPool,
+		service:          searchService,
+		mailer:           mailerSvc,
 	}
 	logStartupPhase("init_application", appInitStartedAt)
 
 	workerStartStartedAt := time.Now()
 	app.workers.Start(context.Background())
-	logStartupPhase("start_workers", workerStartStartedAt)
+	logStartupPhase("start_ingestion_workers", workerStartStartedAt)
+
+	embeddingWorkerStartStartedAt := time.Now()
+	app.embeddingWorkers.Start(context.Background())
+	logStartupPhase("start_embedding_workers", embeddingWorkerStartStartedAt)
 
 	logger.Info("startup complete",
 		"duration_ms", time.Since(processStartedAt).Milliseconds(),
-		"worker_count", cfg.worker_pool.worker_count,
-		"poll_interval", cfg.worker_pool.poll_interval.String(),
+		"ingestion_worker_count", cfg.worker_pool.worker_count,
+		"ingestion_poll_interval", cfg.worker_pool.poll_interval.String(),
+		"embedding_worker_count", cfg.embedding_pool.worker_count,
+		"embedding_poll_interval", cfg.embedding_pool.poll_interval.String(),
+		"embedding_batch_size", cfg.embedding_pool.batch_size,
 		"inline_embedding_enabled", cfg.rollout.inline_embedding_enabled,
 		"async_embedding_enabled", cfg.rollout.async_embedding_enabled,
 		"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
@@ -224,6 +280,7 @@ func main() {
 	}
 
 	app.workers.Shutdown()
+	app.embeddingWorkers.Shutdown()
 
 }
 

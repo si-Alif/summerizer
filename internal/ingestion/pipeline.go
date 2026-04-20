@@ -12,16 +12,14 @@ import (
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
 	"github.com/si-Alif/summerizer/internal/ingestion/cleaner"
-	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 )
 
 type Pipeline struct {
-	fetcher  *fetcher.Fetcher
-	chunker  *chunker.Chunker
-	models   data.Models
-	logger   *slog.Logger
-	embedder *embedder.Embedder
+	fetcher *fetcher.Fetcher
+	chunker *chunker.Chunker
+	models  data.Models
+	logger  *slog.Logger
 }
 
 var (
@@ -34,14 +32,12 @@ func NewPipeline(
 	logger *slog.Logger,
 	f *fetcher.Fetcher,
 	c *chunker.Chunker,
-	e *embedder.Embedder,
 ) *Pipeline {
 	return &Pipeline{
-		fetcher:  f,
-		chunker:  c,
-		models:   models,
-		logger:   logger,
-		embedder: e,
+		fetcher: f,
+		chunker: c,
+		models:  models,
+		logger:  logger,
 	}
 }
 
@@ -57,6 +53,7 @@ type FailureDecision struct {
 //  2. clean  — extract section-aware content blocks from HTML
 //  3. chunk  — split blocks into token-sized chunks with overlap
 //  4. store  — delete old chunks (if re-ingesting), bulk insert new ones
+//  5. embed  — enqueue async embedding work for worker pool
 //
 // On error at any step:
 //   - source.status = "failed"
@@ -232,53 +229,46 @@ func (p *Pipeline) ProcessSource(ctx context.Context, source *data.Source) error
 		"duration_ms", time.Since(storeStartedAt).Milliseconds(),
 	)
 
-	// Step 5: EMBED
-	contents := make([]string, len(chunks))
+	// Step 5: ENQUEUE EMBEDDING JOB
+	enqueueStartedAt := time.Now()
 
-	for i, chunk := range chunks {
-		if chunk.EmbedText != "" {
-			contents[i] = chunk.EmbedText
-			continue
-		}
-
-		contents[i] = chunk.Content
-	}
-
-	embedStartedAt := time.Now()
-	embeddings, err := p.embedder.GetEmbeddings(ctx, contents)
-
-	if err != nil {
-		p.failSource(source, "embed", err)
-		return fmt.Errorf("embedding failed: %w", err)
-	}
-
-	chunkIDs := make([]int64, len(dataChunks))
-
-	for i, chunk := range dataChunks {
-		chunkIDs[i] = chunk.ID
-	}
-
-	err = p.models.Chunks.BulkUpdateEmbedding(chunkIDs, embeddings)
-
-	if err != nil {
-		p.failSource(source, "embed", err)
-		return fmt.Errorf("updating chunk embeddings: %w", err)
-	}
-
-	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "completed", "embed", source.Version)
-
+	newVersion, err = p.models.Sources.UpdateStatus(source.ID, "ingesting", "embed", source.Version)
 	if err != nil {
 		if errors.Is(err, data.ErrEditConflict) {
-			return errors.Join(fmt.Errorf("edit conflict when updating source status to completed for source %d", source.ID), data.ErrEditConflict)
+			return errors.Join(fmt.Errorf("edit conflict when updating source status to embed for source %d", source.ID), data.ErrEditConflict)
 		}
-		return fmt.Errorf("update step to completed for source %d: %w", source.ID, err)
+		p.failSource(source, "embed", err)
+		return fmt.Errorf("update step to embed for source %d: %w", source.ID, err)
 	}
 
 	source.Version = newVersion
-	log.Info("pipeline: completed",
+
+	job := &data.EmbeddingJob{
+		SourceID:      source.ID,
+		SourceVersion: int(source.Version),
+		Status:        data.EmbeddingJobStatusPending,
+	}
+
+	err = p.models.EmbeddingJobs.Insert(job)
+	if err != nil {
+		if errors.Is(err, data.ErrDuplicateRecord) {
+			log.Warn("pipeline: embedding job already queued for this source version",
+				"source_id", source.ID,
+				"source_version", source.Version,
+			)
+			return nil
+		}
+
+		p.failSource(source, "embed", err)
+		return fmt.Errorf("enqueue embedding job for source %d: %w", source.ID, err)
+	}
+
+	log.Info("pipeline: enqueued embedding job",
 		"source_id", source.ID,
+		"job_id", job.ID,
+		"source_version", source.Version,
 		"chunks_stored", len(dataChunks),
-		"embed_duration_ms", time.Since(embedStartedAt).Milliseconds(),
+		"enqueue_duration_ms", time.Since(enqueueStartedAt).Milliseconds(),
 		"pipeline_duration_ms", time.Since(pipelineStartedAt).Milliseconds(),
 	)
 
@@ -327,7 +317,6 @@ func classifyFailure(err error) FailureDecision {
 	if errors.Is(err, fetcher.ErrInvalidURL) ||
 		errors.Is(err, fetcher.ErrEmptyContent) ||
 		errors.Is(err, fetcher.ErrUnexpectedContentType) ||
-		errors.Is(err, embedder.ErrEmptyInput) ||
 		errors.Is(err, ErrNoContentToChunk) ||
 		errors.Is(err, ErrNoChunksGenerated) {
 		return FailureDecision{
@@ -344,9 +333,8 @@ func classifyFailure(err error) FailureDecision {
 	}
 
 	var (
-		embedderErr *embedder.EmbeddingErrors
-		networkErr  net.Error
-		fetcherErr  *fetcher.FetcherErrors
+		networkErr net.Error
+		fetcherErr *fetcher.FetcherErrors
 	)
 
 	switch {
@@ -360,18 +348,6 @@ func classifyFailure(err error) FailureDecision {
 			return FailureDecision{
 				NonRetryable: false,
 				Reason:       fmt.Sprintf("temporary error with status code %d", fetcherErr.StatusCode),
-			}
-		}
-	case errors.As(err, &embedderErr):
-		if isPermanentHTTPStatus(embedderErr.StatusCode) {
-			return FailureDecision{
-				NonRetryable: true,
-				Reason:       "invalid or unprocessable content",
-			}
-		} else {
-			return FailureDecision{
-				NonRetryable: false,
-				Reason:       fmt.Sprintf("temporary error with status code %d", embedderErr.StatusCode),
 			}
 		}
 	case errors.As(err, &networkErr):
