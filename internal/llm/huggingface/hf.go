@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	defaultModel   = "deepseek-ai/DeepSeek-R1"
-	defaultBaseURL = "https://router.huggingface.co/"
+	defaultModel   = "llama-3.1-8b-instant"
+	defaultBaseURL = "https://api.groq.com/"
 	requestTimeout = 120 * time.Second
 )
 
@@ -98,7 +98,7 @@ func (m *HFModel) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.G
 		return nil, fmt.Errorf("huggingface: marshal request: %w", err)
 	}
 
-	url := m.baseURL + "/v1/chat/completions"
+	url := m.baseURL + "/openai/v1/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("huggingface: create request: %w", err)

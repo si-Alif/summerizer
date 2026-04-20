@@ -1,5 +1,6 @@
 package search
 
+
 import (
 	"context"
 	"encoding/json"
@@ -131,7 +132,7 @@ func embedQuery(parentCtx context.Context, query string, emb *embedder.Embedder)
 	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 	defer cancel()
 
-	res, err := emb.GetEmbeddings(ctx, []string{query})
+	res, err := emb.GetSearchQueryEmbedding(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -139,5 +140,5 @@ func embedQuery(parentCtx context.Context, query string, emb *embedder.Embedder)
 		return nil, fmt.Errorf("embed query: no embedding returned")
 	}
 
-	return res[0], nil
+	return res, nil
 }

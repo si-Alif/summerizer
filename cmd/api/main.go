@@ -193,9 +193,24 @@ func main() {
 	logStartupPhase("init_chunker", chunkerStartedAt)
 
 	embedderStartedAt := time.Now()
-	searchEmbedderClient := embedder.NewEmbedder("", "", embedder.WithBatchSize(8), embedder.WithKeepAlive("5m"))
+	nomicOnlineToken := os.Getenv("SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN")
+	searchEmbedderClient := embedder.NewEmbedder(
+		"",
+		"",
+		embedder.WithBatchSize(8),
+		embedder.WithKeepAlive("5m"),
+		embedder.WithNomicOnlineToken(nomicOnlineToken),
+		embedder.WithNomicOnlineModel("nomic-embed-text-v1.5"),
+		embedder.WithNomicOnlineDimension(768),
+	)
 	embeddingWorkerEmbedder := embedder.NewEmbedder("", "", embedder.WithBatchSize(cfg.embedding_pool.batch_size), embedder.WithKeepAlive("30m"))
 	logStartupPhase("init_embedders", embedderStartedAt)
+
+	if nomicOnlineToken == "" {
+		logger.Warn("nomic online token not found; search query embedding will fall back to local embedder")
+	} else {
+		logger.Info("nomic online query embedding enabled", "model", "nomic-embed-text-v1.5", "dimension", 768)
+	}
 
 	pipelineStartedAt := time.Now()
 	pipeline := ingestion.NewPipeline(models, logger, webFetcher, textChunker)
