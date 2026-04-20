@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
   max_attempts INTEGER NOT NULL DEFAULT 5,
   run_after TIMESTAMP(0) WITH TIME ZONE NOT NULL DEFAULT now(),
   locked_at TIMESTAMP(0) WITH TIME ZONE,
+  locked_by TEXT,
   last_error TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMP(0) WITH TIME ZONE NOT NULL DEFAULT now(),
