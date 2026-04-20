@@ -15,7 +15,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/ingestion/chunker"
 	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
-	"github.com/si-Alif/summerizer/internal/llm/huggingface"
+	"github.com/si-Alif/summerizer/internal/llm/gemini"
 	"github.com/si-Alif/summerizer/internal/mailer"
 
 	// "github.com/si-Alif/summerizer/internal/llm/ollama"
@@ -244,7 +244,7 @@ func main() {
 	logStartupPhase("init_embedding_pool", embeddingPoolStartedAt)
 
 	llmStartedAt := time.Now()
-	llmClientHF, err := huggingface.NewHFModel("", "")
+	llmClientGemini, err := gemini.NewGeminiModel("")
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)
@@ -252,7 +252,7 @@ func main() {
 	logStartupPhase("init_llm", llmStartedAt)
 
 	searchStartedAt := time.Now()
-	searchService := search.NewService(searchEmbedderClient, models, llmClientHF)
+	searchService := search.NewService(searchEmbedderClient, models, llmClientGemini)
 	logStartupPhase("init_search_service", searchStartedAt)
 
 	appInitStartedAt := time.Now()

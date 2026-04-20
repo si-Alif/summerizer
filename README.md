@@ -55,7 +55,7 @@ Search Service -> vector similarity -> LLM answer generation with cited source c
 - Docker Compose
 - golang-migrate
 - Embeddings: local Ollama endpoint (default model: nomic-embed-text)
-- LLM generation: Hugging Face chat completions API
+- LLM generation: Google Gemini API (`google.golang.org/genai`)
 
 ## API Endpoints (v1)
 
@@ -99,7 +99,7 @@ Access policy:
 - Docker + Docker Compose
 - migrate CLI
 - Ollama running locally (for embeddings)
-- Hugging Face API token (for answer generation)
+- Gemini API key (for answer generation)
 
 ### 1) Start Postgres
 
@@ -111,7 +111,8 @@ make db/start
 
 ```bash
 export SUMMERIZER_DB_DSN="postgres://summerizer:pa55word@localhost/summerizer?sslmode=disable"
-export SUMMERIZER_HF_API_KEY="<your_hf_api_key>"
+export SUMMERIZER_GEMINI_API_KEY="<your_gemini_api_key>"
+export SUMMERIZER_GEMINI_MODEL="gemini-3-flash-preview"
 ```
 
 ### 3) Run migrations
@@ -149,6 +150,3 @@ curl http://localhost:4000/v1/healthcheck
 - **Data correctness**: optimistic locking using version columns
 - **Search performance**: pgvector cosine similarity + HNSW index
 - **API consistency**: structured JSON responses + validation + middleware
-
-
-
