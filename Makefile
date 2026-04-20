@@ -161,6 +161,95 @@ phase1/snapshot:
 	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase1/snapshot.sql > $$out_file; \
 	echo "Phase1 DB snapshot written -> $$out_file"
 
+## phase2/run/api : run API and tee logs into tmp/phase2 for async-embedding phase captures
+.PHONY: phase2/run/api
+phase2/run/api:
+	@mkdir -p ./tmp/phase2
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	log_file=./tmp/phase2/$${ts}-api.log; \
+	echo "Running API with phase2 logging -> $$log_file"; \
+	go run ./cmd/api \
+		-port=${port} \
+		-env=${env} \
+		-db-dsn=${SUMMERIZER_DB_DSN} \
+		-db-max-open-conns=${db-max-open-conns} \
+		-db-max-idle-conns=${db-max-idle-conns} \
+		-db-max-idle-time=${db-max-idle-time} \
+		-worker-count=${worker-count} \
+		-poll-interval=${poll-interval} \
+		-limiter-rps=${limiter-rps} \
+		-limiter-burst=${limiter-burst} \
+		-limiter-enabled=${limiter-enabled} \
+		-smtp-host=${SMTP_HOST} \
+		-smtp-port=${SMTP_PORT} \
+		-smtp-username=${SMTP_USERNAME} \
+		-smtp-password=${SMTP_PASSWORD} \
+		-smtp-sender=${SMTP_SENDER} \
+		-source-timeout=${source_timeout} \
+		-reclaim-interval=${reclaim_interval} \
+		-stuck-source-threshold=${stuck_source_threshold} \
+		-embedding-worker-count=${embedding-worker-count} \
+		-embedding-poll-interval=${embedding-poll-interval} \
+		-embedding-job-timeout=${embedding-job-timeout} \
+		-embedding-reclaim-interval=${embedding-reclaim-interval} \
+		-embedding-stuck-job-threshold=${embedding-stuck-job-threshold} \
+		-embedding-batch-size=${embedding-batch-size} \
+		-inline-embedding-enabled=${inline-embedding-enabled} \
+		-async-embedding-enabled=${async-embedding-enabled} \
+		-dual-write-embedding-jobs=${dual-write-embedding-jobs} 2>&1 | tee $$log_file
+
+## phase2/snapshot : capture DB snapshot into tmp/phase2 with embedding queue metrics
+.PHONY: phase2/snapshot
+phase2/snapshot:
+	@mkdir -p ./tmp/phase2
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	out_file=./tmp/phase2/$${ts}-db-snapshot.txt; \
+	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase2/snapshot.sql > $$out_file; \
+	echo "Phase2 DB snapshot written -> $$out_file"
+
+## phase2/extract/logs log=./tmp/phase2/<file>.log : extract key async-embedding lines from API logs
+.PHONY: phase2/extract/logs
+phase2/extract/logs:
+	@if [ -z "$(log)" ]; then \
+		echo "Usage: make phase2/extract/logs log=./tmp/phase2/<file>.log"; \
+		exit 1; \
+	fi
+	@grep -E "startup phase complete|startup complete|worker first poll attempt|worker first successful claim|embedding worker first poll attempt|embedding worker first successful claim|pipeline: fetched|pipeline: cleaned|pipeline: chunked|pipeline: stored chunks successfully|pipeline: enqueued embedding job|source ingestion staged for embedding|processing embedding job|embedding job completed|embedding job marked failed|reclaimed stuck sources|reclaimed stuck embedding jobs|shutting down server|worker pool stopped|embedding worker pool stopped" "$(log)" | cat
+
+## phase2/compare/logs base=./tmp/phase0/<file>.log current=./tmp/phase2/<file>.log : diff extracted phase0 and phase2 log views
+.PHONY: phase2/compare/logs
+phase2/compare/logs:
+	@if [ -z "$(base)" ] || [ -z "$(current)" ]; then \
+		echo "Usage: make phase2/compare/logs base=./tmp/phase0/<file>.log current=./tmp/phase2/<file>.log"; \
+		exit 1; \
+	fi
+	@mkdir -p ./tmp/phase2/compare
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	base_out=./tmp/phase2/compare/$${ts}-phase0-extract.log; \
+	current_out=./tmp/phase2/compare/$${ts}-phase2-extract.log; \
+	diff_out=./tmp/phase2/compare/$${ts}-phase0-vs-phase2.diff; \
+	$(MAKE) --no-print-directory phase0/extract/logs log="$(base)" > $$base_out || true; \
+	$(MAKE) --no-print-directory phase2/extract/logs log="$(current)" > $$current_out || true; \
+	diff -u $$base_out $$current_out > $$diff_out || true; \
+	echo "Phase0 extract -> $$base_out"; \
+	echo "Phase2 extract -> $$current_out"; \
+	echo "Diff output -> $$diff_out"; \
+	cat $$diff_out
+
+## phase2/compare/snapshots base=./tmp/phase0/<file>.txt current=./tmp/phase2/<file>.txt : diff two DB snapshots
+.PHONY: phase2/compare/snapshots
+phase2/compare/snapshots:
+	@if [ -z "$(base)" ] || [ -z "$(current)" ]; then \
+		echo "Usage: make phase2/compare/snapshots base=./tmp/phase0/<file>.txt current=./tmp/phase2/<file>.txt"; \
+		exit 1; \
+	fi
+	@mkdir -p ./tmp/phase2/compare
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	diff_out=./tmp/phase2/compare/$${ts}-snapshot.diff; \
+	diff -u "$(base)" "$(current)" > $$diff_out || true; \
+	echo "Snapshot diff -> $$diff_out"; \
+	cat $$diff_out
+
 ## phase0/extract/logs log=./tmp/phase0/<file>.log : extract key baseline lines from API logs
 .PHONY: phase0/extract/logs
 phase0/extract/logs:
