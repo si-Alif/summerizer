@@ -207,6 +207,53 @@ phase2/snapshot:
 	psql "${SUMMERIZER_DB_DSN}" -f ./scripts/phase2/snapshot.sql > $$out_file; \
 	echo "Phase2 DB snapshot written -> $$out_file"
 
+## phase2/run/e2e : run scripted collection->sources->search->ask scenario with resilient source-failure handling
+.PHONY: phase2/run/e2e
+phase2/run/e2e:
+	@chmod +x ./scripts/phase2/e2e_flow.sh
+	@./scripts/phase2/e2e_flow.sh
+
+## phase2/compare/e2e base=./tmp/phase2/e2e/<run>/summary.json current=./tmp/phase2/e2e/<run>/summary.json : diff two e2e summaries
+.PHONY: phase2/compare/e2e
+phase2/compare/e2e:
+	@if [ -z "$(base)" ] || [ -z "$(current)" ]; then \
+		echo "Usage: make phase2/compare/e2e base=./tmp/phase2/e2e/<run>/summary.json current=./tmp/phase2/e2e/<run>/summary.json"; \
+		exit 1; \
+	fi
+	@mkdir -p ./tmp/phase2/compare
+	@ts=$$(date +%Y%m%d-%H%M%S); \
+	base_norm=./tmp/phase2/compare/$${ts}-e2e-base.normalized.json; \
+	current_norm=./tmp/phase2/compare/$${ts}-e2e-current.normalized.json; \
+	diff_out=./tmp/phase2/compare/$${ts}-e2e-summary.diff; \
+	jq -S . "$(base)" > $$base_norm; \
+	jq -S . "$(current)" > $$current_norm; \
+	diff -u $$base_norm $$current_norm > $$diff_out || true; \
+	echo "Base normalized -> $$base_norm"; \
+	echo "Current normalized -> $$current_norm"; \
+	echo "Diff output -> $$diff_out"; \
+	cat $$diff_out
+
+## phase2/compare/e2e/latest : diff latest two phase2 e2e summary runs
+.PHONY: phase2/compare/e2e/latest
+phase2/compare/e2e/latest:
+	@latest=$$(ls -1t ./tmp/phase2/e2e/*/summary.json 2>/dev/null | head -n 2); \
+	if [ -z "$$latest" ]; then \
+		echo "No e2e summary files found under ./tmp/phase2/e2e"; \
+		exit 1; \
+	fi; \
+	count=$$(echo "$$latest" | wc -l | tr -d ' '); \
+	if [ "$$count" -lt 2 ]; then \
+		echo "Need at least two e2e runs to compare."; \
+		echo "Found: $$latest"; \
+		exit 1; \
+	fi; \
+	current=$$(echo "$$latest" | sed -n '1p'); \
+	base=$$(echo "$$latest" | sed -n '2p'); \
+	echo "Comparing latest e2e runs:"; \
+	echo "base=$$base"; \
+	echo "current=$$current"; \
+	$(MAKE) --no-print-directory phase2/compare/e2e base="$$base" current="$$current"
+
 ## phase2/extract/logs log=./tmp/phase2/<file>.log : extract key async-embedding lines from API logs
 .PHONY: phase2/extract/logs
 phase2/extract/logs:
