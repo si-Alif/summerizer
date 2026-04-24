@@ -73,6 +73,7 @@ embedding-job-timeout ?= 300s
 embedding-reclaim-interval ?= 60s
 embedding-stuck-job-threshold ?= 10m
 embedding-batch-size ?= 32
+CORS_TRUSTED_ORIGINS ?= http://localhost:9000 http://localhost:3000
 
 .PHONY: run/api
 run/api:
@@ -93,6 +94,7 @@ run/api:
 		-smtp-username=${SMTP_USERNAME} \
 		-smtp-password=${SMTP_PASSWORD} \
 		-smtp-sender=${SMTP_SENDER} \
+		-cors-trusted-origins="${CORS_TRUSTED_ORIGINS}" \
 		-source-timeout=${source_timeout} \
 		-reclaim-interval=${reclaim_interval} \
 		-stuck-source-threshold=${stuck_source_threshold} \
@@ -185,6 +187,7 @@ phase2/run/api:
 		-smtp-username=${SMTP_USERNAME} \
 		-smtp-password=${SMTP_PASSWORD} \
 		-smtp-sender=${SMTP_SENDER} \
+		-cors-trusted-origins="${CORS_TRUSTED_ORIGINS}" \
 		-source-timeout=${source_timeout} \
 		-reclaim-interval=${reclaim_interval} \
 		-stuck-source-threshold=${stuck_source_threshold} \

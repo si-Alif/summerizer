@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +56,9 @@ type config struct {
 		rps     float64
 		burst   int
 		enabled bool
+	}
+	cors struct {
+		trustedOrigins []string
 	}
 	smtp struct {
 		host     string
@@ -125,9 +129,16 @@ func main() {
 	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", true, "Enable async embedding workflow (required)")
 	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
 
+	// CORS settings
+	flag.Func("cors-trusted-origins" , "Trusted CORS origin(space separated)" , func(s string) error {
+		cfg.cors.trustedOrigins = strings.Fields(s)
+		return nil
+	})
+
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 
 	if !cfg.rollout.async_embedding_enabled {
 		logger.Error("invalid rollout configuration",
