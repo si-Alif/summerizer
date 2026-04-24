@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"expvar"
 	"flag"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -267,6 +269,23 @@ func main() {
 	logStartupPhase("init_search_service", searchStartedAt)
 
 	appInitStartedAt := time.Now()
+
+
+	// exp variables for monitoring
+	expvar.NewString("version").Set(version)
+
+	expvar.Publish("goroutines" , expvar.Func(func() any {
+		return runtime.NumGoroutine()
+	}))
+
+	expvar.Publish("db_stats", expvar.Func(func() any {
+		return db.Stats()
+	}))
+
+	expvar.Publish("timestamp" , expvar.Func(func() any {
+		return time.Now().Unix()
+	}))
+
 	app := application{
 		config:           cfg,
 		logger:           logger,
