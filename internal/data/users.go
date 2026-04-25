@@ -16,16 +16,15 @@ var (
 	ErrDuplicateEmail = errors.New("duplicate email")
 )
 
-
 type User struct {
-	ID           int64     `json:"id"`
-	Email        string    `json:"email"`
-	Password 		password    `json:"-"`
-	Fullname 	 	 string    `json:"fullname"`
-	Activated    bool      `json:"activated"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Version      int32     `json:"-"`
+	ID        int64     `json:"id"`
+	Email     string    `json:"email"`
+	Password  password  `json:"-"`
+	Fullname  string    `json:"fullname"`
+	Activated bool      `json:"activated"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Version   int32     `json:"-"`
 }
 
 type password struct {
@@ -77,7 +76,6 @@ func ValidateLoginInput(v *validator.Validator, email, password string) {
 	v.Check(password != "", "password", "must be provided")
 }
 
-
 type UserModel struct {
 	DB *sql.DB
 }
@@ -98,19 +96,18 @@ func (p *password) Matches(plaintextPassword string) (bool, error) {
 	err := bcrypt.CompareHashAndPassword(p.hash, []byte(plaintextPassword))
 	if err != nil {
 		switch {
-			case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
-				return false, nil
-			default:
-				return false, err
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			return false, nil
+		default:
+			return false, err
 		}
 	}
 
 	return true, nil
 }
 
-
 // DB interaction methods for the UserModel
-func (m *UserModel) Insert(user *User) error{
+func (m *UserModel) Insert(user *User) error {
 	query := `
 	INSERT INTO users (email, password_hash, fullname, activated)
 	VALUES ($1, $2, $3, $4)
@@ -119,10 +116,10 @@ func (m *UserModel) Insert(user *User) error{
 
 	args := []any{user.Email, user.Password.hash, user.Fullname, user.Activated}
 
-	ctx , cancel := context.WithTimeout(context.Background() , 3 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	err := m.DB.QueryRowContext(ctx , query , args...).Scan(
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(
 		&user.ID,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -291,4 +288,3 @@ func (m *UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error
 
 	return &user, nil
 }
-

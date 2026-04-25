@@ -106,7 +106,6 @@ func (m *HFModel) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.G
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+m.apiKey)
 
-
 	httpResp, err := m.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("huggingface: do request: %w", err)

@@ -23,8 +23,8 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	user := &data.User{
-		Email: input.Email,
-		Fullname: input.Fullname,
+		Email:     input.Email,
+		Fullname:  input.Fullname,
 		Activated: false,
 	}
 
@@ -42,7 +42,7 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err =  app.models.Users.Insert(user)
+	err = app.models.Users.Insert(user)
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrDuplicateEmail):
@@ -54,7 +54,7 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	token , err := app.models.Tokens.New(user.ID , 24 * time.Hour , data.ScopeActivation)
+	token, err := app.models.Tokens.New(user.ID, 24*time.Hour, data.ScopeActivation)
 
 	templateData := struct {
 		User             *data.User
@@ -70,10 +70,9 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		UserID:           user.ID,
 	}
 
-
 	app.SpawnBackgroundTask(
 		func() {
-			err := app.mailer.Send(input.Email , "user_welcome.tmpl.html" , templateData)
+			err := app.mailer.Send(input.Email, "user_welcome.tmpl.html", templateData)
 			if err != nil {
 				app.logger.Error(err.Error())
 			}
@@ -87,7 +86,6 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 }
-
 
 func (app *application) activateUserHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -109,7 +107,7 @@ func (app *application) activateUserHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	user , err := app.models.Users.GetForToken(data.ScopeActivation, input.PlainTextToken)
+	user, err := app.models.Users.GetForToken(data.ScopeActivation, input.PlainTextToken)
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrRecordNotFound):
@@ -127,24 +125,23 @@ func (app *application) activateUserHandler(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrEditConflict):
-			app.editConflictResponse(w ,r)
+			app.editConflictResponse(w, r)
 		default:
 			app.serverErrorResponse(w, r, err)
 		}
 		return
 	}
 
-	err = app.models.Tokens.DeleteAllTokenForUser(data.ScopeActivation , user.ID)
+	err = app.models.Tokens.DeleteAllTokenForUser(data.ScopeActivation, user.ID)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
 	}
 
-	err = app.writeJSON(w , http.StatusOK , envelope{"user" : user} , nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"user": user}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
 	}
 
 }
-

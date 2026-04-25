@@ -1,6 +1,5 @@
 package search
 
-
 import (
 	"context"
 	"encoding/json"

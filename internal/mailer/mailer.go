@@ -3,8 +3,8 @@ package mailer
 import (
 	"bytes"
 	"embed"
-	tt "text/template"
 	ht "html/template"
+	tt "text/template"
 	"time"
 
 	"github.com/wneessen/go-mail"
@@ -18,8 +18,8 @@ type Mailer struct {
 	sender string
 }
 
-func NewMailer(host string , port int , username, password, sender string) (*Mailer, error) {
-		client, err := mail.NewClient(
+func NewMailer(host string, port int, username, password, sender string) (*Mailer, error) {
+	client, err := mail.NewClient(
 		host,
 		mail.WithSMTPAuth(mail.SMTPAuthLogin),
 		mail.WithUsername(username),
@@ -37,34 +37,34 @@ func NewMailer(host string , port int , username, password, sender string) (*Mai
 }
 
 func (m *Mailer) Send(recipient, templateName string, data any) error {
-	txt_tmpl , err := tt.New("").ParseFS(templatesFS , "templates/"+templateName)
+	txt_tmpl, err := tt.New("").ParseFS(templatesFS, "templates/"+templateName)
 	if err != nil {
 		return err
 	}
 
 	subject := new(bytes.Buffer)
 
-	err = txt_tmpl.ExecuteTemplate(subject , "subject" , data )
+	err = txt_tmpl.ExecuteTemplate(subject, "subject", data)
 	if err != nil {
 		return err
 	}
 
 	plainBody := new(bytes.Buffer)
 
-	err = txt_tmpl.ExecuteTemplate(plainBody , "plainBody" , data )
+	err = txt_tmpl.ExecuteTemplate(plainBody, "plainBody", data)
 	if err != nil {
 		return err
 	}
 
 	// htmlParsing
-	html_tmpl , err := ht.New("").ParseFS(templatesFS , "templates/"+templateName)
+	html_tmpl, err := ht.New("").ParseFS(templatesFS, "templates/"+templateName)
 	if err != nil {
 		return err
 	}
 
 	htmlBody := new(bytes.Buffer)
 
-	err = html_tmpl.ExecuteTemplate(htmlBody , "htmlBody" , data )
+	err = html_tmpl.ExecuteTemplate(htmlBody, "htmlBody", data)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,7 @@ func (m *Mailer) Send(recipient, templateName string, data any) error {
 			return nil
 		}
 
-		if i != 2{
+		if i != 2 {
 			time.Sleep(800 * time.Millisecond)
 		}
 	}

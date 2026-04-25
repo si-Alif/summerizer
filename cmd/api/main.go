@@ -132,7 +132,7 @@ func main() {
 	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
 
 	// CORS settings
-	flag.Func("cors-trusted-origins" , "Trusted CORS origin(space separated)" , func(s string) error {
+	flag.Func("cors-trusted-origins", "Trusted CORS origin(space separated)", func(s string) error {
 		cfg.cors.trustedOrigins = strings.Fields(s)
 		return nil
 	})
@@ -140,7 +140,6 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
 
 	if !cfg.rollout.async_embedding_enabled {
 		logger.Error("invalid rollout configuration",
@@ -270,11 +269,10 @@ func main() {
 
 	appInitStartedAt := time.Now()
 
-
 	// exp variables for monitoring
 	expvar.NewString("version").Set(version)
 
-	expvar.Publish("goroutines" , expvar.Func(func() any {
+	expvar.Publish("goroutines", expvar.Func(func() any {
 		return runtime.NumGoroutine()
 	}))
 
@@ -282,7 +280,7 @@ func main() {
 		return db.Stats()
 	}))
 
-	expvar.Publish("timestamp" , expvar.Func(func() any {
+	expvar.Publish("timestamp", expvar.Func(func() any {
 		return time.Now().Unix()
 	}))
 

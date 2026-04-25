@@ -5,8 +5,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-
 )
 
 var (
@@ -23,12 +21,11 @@ var (
 
 */
 
-
 const (
 	SourceTypeYouTube = "youtube"
 	SourceTypePDF     = "pdf"
 	SourceTypeWeb     = "web"
-	InvalidSourceType   = ""
+	InvalidSourceType = ""
 )
 
 type Validator struct {

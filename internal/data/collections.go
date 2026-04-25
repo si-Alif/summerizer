@@ -167,11 +167,11 @@ func (m CollectionModel) Update(collection *Collection) error {
 		var pgErr *pgconn.PgError
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-				return ErrEditConflict
+			return ErrEditConflict
 		case errors.As(err, &pgErr) && pgErr.Code == "23505":
-				return ErrDuplicateRecord
+			return ErrDuplicateRecord
 		default:
-				return err
+			return err
 		}
 	}
 

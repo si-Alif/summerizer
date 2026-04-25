@@ -17,10 +17,10 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	collection, err := app.models.Collections.GetByID(id , app.GetUserFromSubsequentRequestContext(r).ID)
+	collection, err := app.models.Collections.GetByID(id, app.GetUserFromSubsequentRequestContext(r).ID)
 	if err != nil {
 		switch {
-		case errors.Is(err , data.ErrRecordNotFound):
+		case errors.Is(err, data.ErrRecordNotFound):
 			app.notFoundResponse(w, r)
 		default:
 			app.serverErrorResponse(w, r, err)
@@ -31,7 +31,7 @@ func (app *application) showCollectionHandler(w http.ResponseWriter, r *http.Req
 	// TODO: replace with app.models.Sources.GetStatusSummary(collection.ID)
 	// Source status summary gives the user a quick overview of processing state
 	// e.g. { "pending": 2, "ingesting": 1, "completed": 5, "failed": 0 }
-	sourceStatusSummary , err := app.models.Sources.GetStatusSummary(collection.ID)
+	sourceStatusSummary, err := app.models.Sources.GetStatusSummary(collection.ID)
 
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
@@ -75,10 +75,10 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 	err = app.models.Collections.Insert(collection)
 	if err != nil {
 		switch {
-			case errors.Is(err , data.ErrDuplicateRecord):
-				app.duplicateResourceResponse(w , r , "collection with this title already exists")
-			default:
-				app.serverErrorResponse(w, r, err)
+		case errors.Is(err, data.ErrDuplicateRecord):
+			app.duplicateResourceResponse(w, r, "collection with this title already exists")
+		default:
+			app.serverErrorResponse(w, r, err)
 		}
 		return
 	}
@@ -90,7 +90,6 @@ func (app *application) createCollectionHandler(w http.ResponseWriter, r *http.R
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
-
 
 }
 
@@ -104,12 +103,11 @@ func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-
-	collection, err := app.models.Collections.GetByID(collection_id , app.GetUserFromSubsequentRequestContext(r).ID)
+	collection, err := app.models.Collections.GetByID(collection_id, app.GetUserFromSubsequentRequestContext(r).ID)
 
 	if err != nil {
 		switch {
-		case errors.Is(err , data.ErrRecordNotFound):
+		case errors.Is(err, data.ErrRecordNotFound):
 			app.notFoundResponse(w, r)
 		default:
 			app.serverErrorResponse(w, r, err)
@@ -151,11 +149,11 @@ func (app *application) updateCollectionHandler(w http.ResponseWriter, r *http.R
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrEditConflict):
-				app.editConflictResponse(w, r)
+			app.editConflictResponse(w, r)
 		case errors.Is(err, data.ErrDuplicateRecord):
-				app.duplicateResourceResponse(w, r, "collection with this title already exists")
+			app.duplicateResourceResponse(w, r, "collection with this title already exists")
 		default:
-				app.serverErrorResponse(w, r, err)
+			app.serverErrorResponse(w, r, err)
 		}
 		return
 	}
@@ -175,10 +173,10 @@ func (app *application) deleteCollectionHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = app.models.Collections.Delete(id , app.GetUserFromSubsequentRequestContext(r).ID)
+	err = app.models.Collections.Delete(id, app.GetUserFromSubsequentRequestContext(r).ID)
 	if err != nil {
 		switch {
-		case errors.Is(err , data.ErrRecordNotFound):
+		case errors.Is(err, data.ErrRecordNotFound):
 			app.notFoundResponse(w, r)
 		default:
 			app.serverErrorResponse(w, r, err)
@@ -205,21 +203,19 @@ func (app *application) listCollectionsHandler(w http.ResponseWriter, r *http.Re
 
 	qrs := r.URL.Query()
 
-	input.Title = app.readString(qrs , "title" , "")
-	input.Filters.Page = app.readInt(qrs , "page" , 1 , v)
-	input.Filters.PageSize = app.readInt(qrs , "page_size" , 20 , v)
-	input.Filters.Sort = app.readString(qrs , "sort" , "id")
+	input.Title = app.readString(qrs, "title", "")
+	input.Filters.Page = app.readInt(qrs, "page", 1, v)
+	input.Filters.PageSize = app.readInt(qrs, "page_size", 20, v)
+	input.Filters.Sort = app.readString(qrs, "sort", "id")
 	input.Filters.SortSafeList = []string{"id", "title", "created_at", "-id", "-title", "-created_at"}
 
-
-
-	if data.ValidateFilters(v, input.Filters) ; !v.Valid() {
+	if data.ValidateFilters(v, input.Filters); !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
 	user := app.GetUserFromSubsequentRequestContext(r)
-	collections, metadata, err := app.models.Collections.GetAll(user.ID , input.Title , input.Filters)
+	collections, metadata, err := app.models.Collections.GetAll(user.ID, input.Title, input.Filters)
 
 	if err != nil {
 		app.serverErrorResponse(w, r, err)

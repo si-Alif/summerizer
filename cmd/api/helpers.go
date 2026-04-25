@@ -39,7 +39,6 @@ func (app *application) readIDParam(r *http.Request) (int64, error) {
 	return id, nil
 }
 
-
 func (app *application) writeJSON(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
 	js, err := json.MarshalIndent(data, "", "\t")
 
@@ -115,8 +114,7 @@ func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst any
 
 }
 
-
-func (app *application) readString(vals url.Values , key,defaultValue string) string {
+func (app *application) readString(vals url.Values, key, defaultValue string) string {
 	val := vals.Get(key)
 
 	if val == "" {
@@ -126,17 +124,17 @@ func (app *application) readString(vals url.Values , key,defaultValue string) st
 	return val
 }
 
-func (app *application) readCSV(vals url.Values , key string, defaultValue []string) []string {
+func (app *application) readCSV(vals url.Values, key string, defaultValue []string) []string {
 	val := vals.Get(key)
 
 	if val == "" {
 		return defaultValue
 	}
 
-	return  strings.Split(val , ",")
+	return strings.Split(val, ",")
 }
 
-func (app *application) readInt(vals url.Values , key string, defaultValue int , v *validator.Validator) int {
+func (app *application) readInt(vals url.Values, key string, defaultValue int, v *validator.Validator) int {
 	val := vals.Get(key)
 
 	if val == "" {
@@ -155,9 +153,9 @@ func (app *application) SpawnBackgroundTask(fn func()) {
 
 	app.wg.Add(1)
 
-	go func(){
+	go func() {
 		defer app.wg.Done()
-		defer func(){
+		defer func() {
 			if err := recover(); err != nil {
 				app.logger.Error("Background task panicked", "error", fmt.Sprintf("%v", err))
 			}

@@ -7,9 +7,9 @@ import (
 )
 
 type Filters struct {
-	Page     int
-	PageSize int
-	Sort string
+	Page         int
+	PageSize     int
+	Sort         string
 	SortSafeList []string
 }
 
@@ -21,7 +21,6 @@ type Metadata struct {
 	TotalRecords int `json:"total_records,omitzero"`
 }
 
-
 // Limit returns the SQL LIMIT value.
 func (f Filters) Limit() int {
 	return f.PageSize
@@ -32,13 +31,11 @@ func (f Filters) Offset() int {
 	return (f.Page - 1) * f.PageSize
 }
 
-
 // CalculateMetadata computes pagination metadata from total record count.
 func CalculateMetadata(totalRecords, page, pageSize int) Metadata {
 	if totalRecords == 0 {
 		return Metadata{}
 	}
-
 
 	return Metadata{
 		CurrentPage:  page,
@@ -62,9 +59,9 @@ func ValidateFilters(v *validator.Validator, f Filters) {
 
 // SORT BY <column> value extraction
 func (f Filters) SortColumn() string {
-	for _ , safeVal := range f.SortSafeList{
+	for _, safeVal := range f.SortSafeList {
 		if f.Sort == safeVal {
-			return  strings.TrimPrefix(f.Sort , "-")
+			return strings.TrimPrefix(f.Sort, "-")
 		}
 	}
 
@@ -73,7 +70,7 @@ func (f Filters) SortColumn() string {
 
 // SortDirection returns "ASC" or "DESC" based on the presence of a "-" prefix in the Sort field.
 func (f Filters) SortDirection() string {
-	if strings.HasPrefix(f.Sort , "-") {
+	if strings.HasPrefix(f.Sort, "-") {
 		return "DESC"
 	}
 

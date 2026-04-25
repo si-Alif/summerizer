@@ -50,6 +50,43 @@ db/logs:
 # DEVELOPMENT COMMANDS
 # =================================================================
 
+
+## db/psql : connect to the Greenlight database using psql
+.PHONY: db/psql
+db/psql:
+	psql ${SUMMERIZER_DB_DSN}
+
+## db/migrations/up : apply all up migrations
+.PHONY: db/migrations/up
+db/migrations/up: confirm
+	@echo "Running up migrations..."
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} up
+
+## db/migrations/new name=$1 : create a new migration file with the given name
+.PHONY: db/migrations/new
+db/migrations/new :
+	@echo "Creating new migration for ${name}..."
+	migrate create -seq -ext=.sql -dir=./migrations ${name}
+
+## db/migrations/down n=$1 : roll back n migrations
+.PHONY: db/migrations/down
+db/migrations/down:
+	@echo 'Rolling back $(n) migration(s)...'
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} down $(n)
+
+## db/migrations/force v=$1 : force migration version (use after dirty state)
+.PHONY: db/migrations/force
+db/migrations/force:
+	@echo 'Forcing migration version to $(v)...'
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} force $(v)
+
+## db/migrations/version : show current migration version
+.PHONY: db/migrations/version
+db/migrations/version:
+	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} version
+
+
+
 ## run/api : run the cmd/api application
 port ?= 4000
 env ?= development
@@ -319,39 +356,6 @@ phase0/extract/clean-methods:
 	@awk -f ./scripts/phase0/clean_method_distribution.awk "$(log)"
 
 
-## db/psql : connect to the Greenlight database using psql
-.PHONY: db/psql
-db/psql:
-	psql ${SUMMERIZER_DB_DSN}
-
-## db/migrations/up : apply all up migrations
-.PHONY: db/migrations/up
-db/migrations/up: confirm
-	@echo "Running up migrations..."
-	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} up
-
-## db/migrations/new name=$1 : create a new migration file with the given name
-.PHONY: db/migrations/new
-db/migrations/new :
-	@echo "Creating new migration for ${name}..."
-	migrate create -seq -ext=.sql -dir=./migrations ${name}
-
-## db/migrations/down n=$1 : roll back n migrations
-.PHONY: db/migrations/down
-db/migrations/down:
-	@echo 'Rolling back $(n) migration(s)...'
-	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} down $(n)
-
-## db/migrations/force v=$1 : force migration version (use after dirty state)
-.PHONY: db/migrations/force
-db/migrations/force:
-	@echo 'Forcing migration version to $(v)...'
-	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} force $(v)
-
-## db/migrations/version : show current migration version
-.PHONY: db/migrations/version
-db/migrations/version:
-	migrate -path ./migrations -database ${SUMMERIZER_DB_DSN} version
 
 # =================================================================
 # QUALITY CONTROL COMMANDS

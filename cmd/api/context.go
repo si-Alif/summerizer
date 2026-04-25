@@ -22,6 +22,6 @@ func (app *application) GetUserFromSubsequentRequestContext(r *http.Request) *da
 	if !ok {
 		panic("missing user value in request context")
 	}
-	
+
 	return user
 }

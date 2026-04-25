@@ -55,13 +55,11 @@ func (j *JsonMap) Scan(value any) error {
 	return nil
 }
 
-
 var (
 	PermittedSourceTypes = []string{validator.SourceTypeWeb, validator.SourceTypeYouTube, validator.SourceTypePDF}
 	PermittedStatuses    = []string{"pending", "ingesting", "completed", "failed", "stale"}
 	PermittedSteps       = []string{"fetch", "clean", "chunk", "embed", "store"}
 )
-
 
 func ValidateSource(v *validator.Validator, source *Source) {
 	v.Check(source.CollectionID > 0, "collection_id", "must be a positive integer")
@@ -110,11 +108,9 @@ func ValidateSourceStatus(v *validator.Validator, status string, currentStep *st
 	}
 }
 
-
 type SourceModel struct {
 	DB *sql.DB
 }
-
 
 func (m SourceModel) Insert(source *Source) error {
 	query := `
@@ -124,19 +120,19 @@ func (m SourceModel) Insert(source *Source) error {
 
 	args := []any{source.CollectionID, source.SourceType, source.URL, source.Title, source.Metadata}
 
-	ctx , cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err := m.DB.QueryRowContext(ctx, query, args...).Scan(
-					&source.ID,
-					&source.Status,
-					&source.RetryCount,
-					&source.CreatedAt,
-					&source.UpdatedAt,
-					&source.Version,
-				)
+		&source.ID,
+		&source.Status,
+		&source.RetryCount,
+		&source.CreatedAt,
+		&source.UpdatedAt,
+		&source.Version,
+	)
 
-		if err != nil {
+	if err != nil {
 		var pgErr *pgconn.PgError
 		switch {
 		case errors.As(err, &pgErr) && pgErr.Code == "23505":
@@ -194,7 +190,6 @@ func (m SourceModel) GetByID(id int64, userID int64) (*Source, error) {
 
 	return &source, nil
 }
-
 
 func (m SourceModel) GetAllByCollection(collectionID int64, userID int64, status string, filters Filters) ([]*Source, Metadata, error) {
 	query := fmt.Sprintf(`
@@ -257,7 +252,6 @@ func (m SourceModel) GetAllByCollection(collectionID int64, userID int64, status
 	return sources, meta, nil
 }
 
-
 func (m SourceModel) Delete(id int64, userID int64) error {
 	query := `
 	DELETE FROM sources s USING collections c
@@ -283,7 +277,6 @@ func (m SourceModel) Delete(id int64, userID int64) error {
 	return nil
 }
 
-
 // CountByCollection returns the total number of sources in a collection, used for pagination metadata.
 func (m SourceModel) CountByCollection(collectionID int64) (int, error) {
 	query := `SELECT COUNT(*) FROM sources WHERE collection_id = $1`
@@ -299,7 +292,6 @@ func (m SourceModel) CountByCollection(collectionID int64) (int, error) {
 
 	return count, nil
 }
-
 
 func (m SourceModel) GetStatusSummary(collectionID int64) (map[string]int, error) {
 
@@ -332,7 +324,6 @@ func (m SourceModel) GetStatusSummary(collectionID int64) (map[string]int, error
 		return nil, err
 	}
 
-
 	for _, s := range PermittedStatuses {
 		if _, exists := statusSummary[s]; !exists {
 			statusSummary[s] = 0
@@ -347,10 +338,10 @@ func (m SourceModel) GetStatusSummary(collectionID int64) (map[string]int, error
 // ---------------------------------------------------------------------------
 
 func (m SourceModel) ClaimPending(limit int) ([]*Source, error) {
-	ctx , cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	tx , err := m.DB.BeginTx(ctx , nil)
+	tx, err := m.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -436,20 +427,19 @@ func (m SourceModel) ClaimPending(limit int) ([]*Source, error) {
 	step := "fetch"
 
 	for _, s := range sources {
-			s.Status = "ingesting"
-			s.CurrentStep = &step
-			s.StepError = nil
-			s.NextRetryAt = nil
-			s.Version++
-			s.UpdatedAt = time.Now()
+		s.Status = "ingesting"
+		s.CurrentStep = &step
+		s.StepError = nil
+		s.NextRetryAt = nil
+		s.Version++
+		s.UpdatedAt = time.Now()
 	}
 
 	return sources, nil
 
 }
 
-
-func (m SourceModel) UpdateStatus(id int64, status string, currentStep string , ver int32) (int32 , error) {
+func (m SourceModel) UpdateStatus(id int64, status string, currentStep string, ver int32) (int32, error) {
 
 	query := `
 	UPDATE sources
@@ -469,15 +459,14 @@ func (m SourceModel) UpdateStatus(id int64, status string, currentStep string , 
 	args := []any{status, currentStep, id, ver}
 	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&newVer)
 	if err != nil {
-		if errors.Is(err , sql.ErrNoRows){
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrEditConflict
 		}
-		return 0 , err
+		return 0, err
 	}
 
 	return newVer, nil
 }
-
 
 func (m SourceModel) ReclaimStuckAtIngesting(threshold time.Duration) (int64, error) {
 	query := `
@@ -514,10 +503,10 @@ func (m SourceModel) ReclaimStuckAtIngesting(threshold time.Duration) (int64, er
 		return 0, err
 	}
 
-	return  result.RowsAffected()
+	return result.RowsAffected()
 }
 
-func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string , ver int32)  error {
+func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string, ver int32) error {
 	query := `
 	UPDATE sources
 	SET
@@ -539,10 +528,10 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string , ver int
 	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&retryCount, &newVersion)
 
 	if err != nil {
-		if errors.Is(err , sql.ErrNoRows){
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEditConflict
 		}
-		return  err
+		return err
 	}
 
 	if retryCount >= 5 {
@@ -551,17 +540,17 @@ func (m SourceModel) MarkAsFailed(id int64, step string, errMsg string , ver int
 		SET status = 'stale', version = version + 1
 		WHERE id = $1 AND version = $2`
 
-	_, updateErr := m.DB.ExecContext(ctx, updateQuery, id, newVersion)
+		_, updateErr := m.DB.ExecContext(ctx, updateQuery, id, newVersion)
 		if updateErr != nil {
-			return  fmt.Errorf("marking source as stale after max retries: %w", updateErr)
+			return fmt.Errorf("marking source as stale after max retries: %w", updateErr)
 		}
 	}
 
 	return err
 }
 
-func (m SourceModel) MarkAsStale(id int64, step string, errMsg string , ver int32) error {
-    query := `
+func (m SourceModel) MarkAsStale(id int64, step string, errMsg string, ver int32) error {
+	query := `
     UPDATE sources
     SET
         status = 'stale',
@@ -572,23 +561,23 @@ func (m SourceModel) MarkAsStale(id int64, step string, errMsg string , ver int3
         version = version + 1
     WHERE id = $3 AND version = $4 AND status = 'ingesting'`
 
-    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-    res, err := m.DB.ExecContext(ctx, query, step, errMsg, id, ver)
+	res, err := m.DB.ExecContext(ctx, query, step, errMsg, id, ver)
 
-		if err != nil {
-			if errors.Is(err , sql.ErrNoRows){
-				return ErrEditConflict
-			}
-			return  err
-		}
-
-		rowsAffected , err := res.RowsAffected()
-
-		if rowsAffected == 0 {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrEditConflict
 		}
+		return err
+	}
 
-		return  err
+	rowsAffected, err := res.RowsAffected()
+
+	if rowsAffected == 0 {
+		return ErrEditConflict
+	}
+
+	return err
 }

@@ -16,7 +16,6 @@ func (app *application) routes() http.Handler {
 
 	router.HandlerFunc(http.MethodGet, "/v1/healthcheck", app.healthCheckHandler)
 
-
 	router.HandlerFunc(http.MethodPost, "/v1/collections", app.requireActivatedUser(app.createCollectionHandler))
 	router.HandlerFunc(http.MethodGet, "/v1/collections", app.requireActivatedUser(app.listCollectionsHandler))
 	router.HandlerFunc(http.MethodGet, "/v1/collections/:id", app.requireActivatedUser(app.showCollectionHandler))
@@ -37,7 +36,6 @@ func (app *application) routes() http.Handler {
 
 	// token routes
 	router.HandlerFunc(http.MethodPost, "/v1/tokens/authentication", app.createAuthenticationTokenHandler)
-
 
 	// metrics route
 	router.Handler(http.MethodGet, "/debug/vars", expvar.Handler())

@@ -45,10 +45,10 @@ const html = `<!DOCTYPE html>
 </html>`
 
 func main() {
-	addr := flag.String("addr" , ":9000" , "Server address")
+	addr := flag.String("addr", ":9000", "Server address")
 	flag.Parse()
 
-	err := http.ListenAndServe(*addr , http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	err := http.ListenAndServe(*addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(html))
 	}))
 
