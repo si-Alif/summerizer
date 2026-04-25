@@ -16,7 +16,6 @@ I wanted to understand what actually goes wrong in a RAG system once you move pa
 
 So I built Summerizer as a real backend project ; not a prototype, not a notebook ; with queue-based ingestion, worker pools, consistency controls, vector retrieval, and phase-based evaluation to prove that changes actually helped. Every design decision came from either hitting a problem or actively thinking about what would break next.
 
-This is the project I'd want to walk through in a system design interview.
 
 ---
 
