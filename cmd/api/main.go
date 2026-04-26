@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"expvar"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"github.com/si-Alif/summerizer/internal/ingestion/fetcher"
 	"github.com/si-Alif/summerizer/internal/llm/gemini"
 	"github.com/si-Alif/summerizer/internal/mailer"
+	"github.com/si-Alif/summerizer/internal/vcs"
 
 	// "github.com/si-Alif/summerizer/internal/llm/ollama"
 	"github.com/si-Alif/summerizer/internal/search"
@@ -27,7 +29,7 @@ import (
 )
 
 var (
-	version = "1.0.0"
+	version = vcs.Version()
 )
 
 type config struct {
@@ -131,6 +133,8 @@ func main() {
 	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", true, "Enable async embedding workflow (required)")
 	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
 
+	showVer := flag.Bool("version", false, "Show version and exit")
+
 	// CORS settings
 	flag.Func("cors-trusted-origins", "Trusted CORS origin(space separated)", func(s string) error {
 		cfg.cors.trustedOrigins = strings.Fields(s)
@@ -138,6 +142,11 @@ func main() {
 	})
 
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("version: \t%s\n", version)
+		os.Exit(0)
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
