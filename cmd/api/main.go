@@ -72,7 +72,6 @@ type config struct {
 		password string
 		sender   string
 	}
-
 }
 
 type application struct {
@@ -177,7 +176,6 @@ func main() {
 	flag.StringVar(&cfg.smtp.password, "smtp-password", defaultSMTPPassword, "SMTP server password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", defaultSMTPSender, "Email address of the sender")
 
-
 	showVer := flag.Bool("version", false, "Show version and exit")
 
 	// CORS settings
@@ -230,7 +228,6 @@ func main() {
 		logger.Error("missing Gemini API key", "hint", "set SUMMERIZER_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY")
 		os.Exit(1)
 	}
-
 
 	logStartupPhase := func(phase string, startedAt time.Time) {
 		logger.Info("startup phase complete",
