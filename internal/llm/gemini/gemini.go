@@ -35,8 +35,6 @@ func NewGeminiModel(model string) (*GeminiModel, error) {
 		os.Getenv("SUMMERIZER_GEMINI_API_KEY"),
 		os.Getenv("GEMINI_API_KEY"),
 		os.Getenv("GOOGLE_API_KEY"),
-		// Backward-compatible fallback for existing local setup.
-		os.Getenv("SUMMERIZER_HF_API_KEY"),
 	)
 	if apiKey == "" {
 		return nil, fmt.Errorf("gemini: missing API key; set SUMMERIZER_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY")

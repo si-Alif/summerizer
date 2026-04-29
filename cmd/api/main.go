@@ -72,11 +72,7 @@ type config struct {
 		password string
 		sender   string
 	}
-	rollout struct {
-		inline_embedding_enabled  bool
-		async_embedding_enabled   bool
-		dual_write_embedding_jobs bool
-	}
+
 }
 
 type application struct {
@@ -180,9 +176,7 @@ func main() {
 	flag.StringVar(&cfg.smtp.username, "smtp-username", defaultSMTPUsername, "SMTP server username")
 	flag.StringVar(&cfg.smtp.password, "smtp-password", defaultSMTPPassword, "SMTP server password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", defaultSMTPSender, "Email address of the sender")
-	flag.BoolVar(&cfg.rollout.inline_embedding_enabled, "inline-embedding-enabled", false, "Deprecated: inline embedding path has been removed")
-	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", true, "Enable async embedding workflow (required)")
-	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
+
 
 	showVer := flag.Bool("version", false, "Show version and exit")
 
@@ -231,33 +225,12 @@ func main() {
 		os.Getenv("SUMMERIZER_GEMINI_API_KEY"),
 		os.Getenv("GEMINI_API_KEY"),
 		os.Getenv("GOOGLE_API_KEY"),
-		os.Getenv("SUMMERIZER_HF_API_KEY"),
 	)
 	if geminiAPIKey == "" {
 		logger.Error("missing Gemini API key", "hint", "set SUMMERIZER_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY")
 		os.Exit(1)
 	}
 
-	if !cfg.rollout.async_embedding_enabled {
-		logger.Error("invalid rollout configuration",
-			"reason", "async embedding must be enabled because ingestion now enqueues embedding jobs",
-		)
-		os.Exit(1)
-	}
-
-	if cfg.rollout.inline_embedding_enabled {
-		logger.Warn("inline embedding flag is deprecated and ignored; pipeline is async-only now",
-			"inline_embedding_enabled", cfg.rollout.inline_embedding_enabled,
-		)
-		cfg.rollout.inline_embedding_enabled = false
-	}
-
-	if cfg.rollout.dual_write_embedding_jobs {
-		logger.Warn("dual-write flag is deprecated and ignored; async queue is the only embedding path now",
-			"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
-		)
-		cfg.rollout.dual_write_embedding_jobs = false
-	}
 
 	logStartupPhase := func(phase string, startedAt time.Time) {
 		logger.Info("startup phase complete",
@@ -425,9 +398,6 @@ func main() {
 		"embedding_worker_count", cfg.embedding_pool.worker_count,
 		"embedding_poll_interval", cfg.embedding_pool.poll_interval.String(),
 		"embedding_batch_size", cfg.embedding_pool.batch_size,
-		"inline_embedding_enabled", cfg.rollout.inline_embedding_enabled,
-		"async_embedding_enabled", cfg.rollout.async_embedding_enabled,
-		"dual_write_embedding_jobs", cfg.rollout.dual_write_embedding_jobs,
 	)
 
 	err = app.serve()
