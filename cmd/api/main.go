@@ -214,24 +214,41 @@ func main() {
 	logStartupPhase("init_chunker", chunkerStartedAt)
 
 	embedderStartedAt := time.Now()
-	nomicOnlineToken := os.Getenv("SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN")
-	searchEmbedderClient := embedder.NewEmbedder(
-		"",
-		"",
-		embedder.WithBatchSize(8),
-		embedder.WithKeepAlive("5m"),
-		embedder.WithNomicOnlineToken(nomicOnlineToken),
-		embedder.WithNomicOnlineModel("nomic-embed-text-v1.5"),
-		embedder.WithNomicOnlineDimension(768),
-	)
-	embeddingWorkerEmbedder := embedder.NewEmbedder("", "", embedder.WithBatchSize(cfg.embedding_pool.batch_size), embedder.WithKeepAlive("30m"))
-	logStartupPhase("init_embedders", embedderStartedAt)
+	nomicOnlineToken := strings.TrimSpace(os.Getenv("SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN"))
 
 	if nomicOnlineToken == "" {
-		logger.Warn("nomic online token not found; search query embedding will fall back to local embedder")
-	} else {
-		logger.Info("nomic online query embedding enabled", "model", "nomic-embed-text-v1.5", "dimension", 768)
+		logger.Error("nomic online token not found; embeddings require nomic")
+		os.Exit(1)
 	}
+
+	searchEmbedderClient, err := embedder.NewEmbedder(
+		embedder.NomicOnlineEmbedderType,
+		embedder.WithBatchSize(8),
+		embedder.WithNomicToken(nomicOnlineToken),
+		embedder.WithNomicModel("nomic-embed-text-v1.5"),
+		embedder.WithNomicDimension(768),
+		embedder.WithMaxIdleConnsPerHost(cfg.embedding_pool.worker_count),
+	)
+	if err != nil {
+		logger.Error("failed to init search embedder", "error", err)
+		os.Exit(1)
+	}
+
+	embeddingWorkerEmbedder, err := embedder.NewEmbedder(
+		embedder.NomicOnlineEmbedderType,
+		embedder.WithBatchSize(cfg.embedding_pool.batch_size),
+		embedder.WithNomicToken(nomicOnlineToken),
+		embedder.WithNomicModel("nomic-embed-text-v1.5"),
+		embedder.WithNomicDimension(768),
+		embedder.WithMaxIdleConnsPerHost(cfg.embedding_pool.worker_count),
+	)
+	if err != nil {
+		logger.Error("failed to init embedding worker embedder", "error", err)
+		os.Exit(1)
+	}
+	logStartupPhase("init_embedders", embedderStartedAt)
+
+	logger.Info("nomic online embedding enabled", "model", "nomic-embed-text-v1.5", "dimension", 768)
 
 	pipelineStartedAt := time.Now()
 	pipeline := ingestion.NewPipeline(models, logger, webFetcher, textChunker)

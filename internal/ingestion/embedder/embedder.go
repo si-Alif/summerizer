@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -15,19 +15,31 @@ import (
 )
 
 const (
-	defaultEmbeddingModel        = "nomic-embed-text"
-	defaultEmbeddingModelBaseURL = "http://localhost:11434"
-	requestTimeout               = 90 * time.Second
+	// ollama specific
+	defaultOllamaEmbeddingModel        = "nomic-embed-text"
+	defaultOllamaModelBaseURL = "http://localhost:11434"
+	defaultKeepAlive      = "30m"
+
+	// nomic online specific
 	defaultNomicOnlineEndpoint   = "https://api-atlas.nomic.ai/v1/embedding/text"
 	defaultNomicOnlineModel      = "nomic-embed-text-v1.5"
 	defaultEmbeddingDimension    = 768
 
+	// shared defaults
 	defaultEmbedBatchSize = 32
 	minEmbedBatchSize     = 1
-	defaultKeepAlive      = "30m"
 	defaultRetryDelay     = 500 * time.Millisecond
 	defaultMaxRetryDelay  = 10 * time.Second
-	coldStartThreshold    = 2 * time.Second
+
+	// cold start threshold
+	coldStartDurationThreshold = 5 * time.Second
+
+	// HTTP client threshold
+	dialTimeout                  = 5 * time.Second
+	tlsHandshakeTimeout        = 5 * time.Second
+	responseHeaderTimeout     = 10 * time.Second
+	idleConnTimeout            = 60 * time.Second
+	requestTimeout               = 90 * time.Second
 )
 
 var (
@@ -37,115 +49,25 @@ var (
 	ErrInvalidResponse    = errors.New("embedder: invalid response from embedding service")
 	ErrFailedRequest      = errors.New("embedder: failed to make request to embedding service")
 	ErrMissingNomicToken  = errors.New("embedder: missing nomic online embedding token")
+	ErrUnknownEmbeddingInstance = errors.New("embedder: unknown embedding instance")
 )
 
-type Embedder struct {
-	httpClient       *http.Client
-	model            string
-	baseURL          string
-	keepAlive        string
-	defaultBatchSize int
-	retryDelay       time.Duration
-	maxRetryDelay    time.Duration
-	nomicToken       string
-	nomicEndpoint    string
-	nomicModel       string
-	nomicDimension   int
-}
 
-type Option func(*Embedder)
-
-func WithBatchSize(n int) Option {
-	return func(e *Embedder) {
-		if n > 0 {
-			e.defaultBatchSize = n
-		}
-	}
-}
-
-func WithRetryDelay(d time.Duration) Option {
-	return func(e *Embedder) {
-		if d > 0 {
-			e.retryDelay = d
-		}
-	}
-}
-
-func WithMaxRetryDelay(d time.Duration) Option {
-	return func(e *Embedder) {
-		if d > 0 {
-			e.maxRetryDelay = d
-		}
-	}
-}
-
-func WithKeepAlive(s string) Option {
-	return func(e *Embedder) {
-		if s != "" {
-			e.keepAlive = s
-		}
-	}
-}
-
-func WithNomicOnlineToken(token string) Option {
-	return func(e *Embedder) {
-		e.nomicToken = strings.TrimSpace(token)
-	}
-}
-
-func WithNomicOnlineModel(model string) Option {
-	return func(e *Embedder) {
-		if model != "" {
-			e.nomicModel = model
-		}
-	}
-}
-
-func WithNomicOnlineEndpoint(endpoint string) Option {
-	return func(e *Embedder) {
-		if endpoint != "" {
-			e.nomicEndpoint = endpoint
-		}
-	}
-}
-
-func WithNomicOnlineDimension(d int) Option {
-	return func(e *Embedder) {
-		if d > 0 {
-			e.nomicDimension = d
-		}
-	}
-}
-
+// Error
 type EmbeddingErrors struct {
 	StatusCode int
 	Err        error
-}
-
-type EmbeddingStats struct {
-	TotalDuration   time.Duration `json:"total_duration"`
-	LoadDuration    time.Duration `json:"load_duration"`
-	PromptEvalCount int           `json:"prompt_eval_count"`
-}
-
-type BatchedEmbeddingStats struct {
-	TotalDuration    time.Duration `json:"total_duration"`
-	LoadDuration     time.Duration `json:"load_duration"`
-	PromptEvalCount  int           `json:"prompt_eval_count"`
-	Batches          int           `json:"batches"`
-	Retries          int           `json:"retries"`
-	FinalBatchSize   int           `json:"final_batch_size"`
-	ColdStartBatches int           `json:"cold_start_batches"`
 }
 
 func (e *EmbeddingErrors) Error() string {
 	if e == nil {
 		return "embedder error: <nil>"
 	}
-	if e.Err == nil {
-		return fmt.Sprintf("embedder error status=%d", e.StatusCode)
+	if e.Err == nil{
+		return  fmt.Sprintf("embedder error: status code %d, <nil error>", e.StatusCode)
 	}
-	return fmt.Sprintf("embedder error status=%d: %v", e.StatusCode, e.Err)
+
+	return fmt.Sprintf("embedder error: status code %d, error: %v", e.StatusCode, e.Err)
 }
 
 func (e *EmbeddingErrors) Unwrap() error {
@@ -155,219 +77,491 @@ func (e *EmbeddingErrors) Unwrap() error {
 	return e.Err
 }
 
-func NewEmbedder(baseURL, model string, opts ...Option) *Embedder {
-	if baseURL == "" {
-		baseURL = defaultEmbeddingModelBaseURL
-	}
-	if model == "" {
-		model = defaultEmbeddingModel
-	}
-
-	e := &Embedder{
-		httpClient:       &http.Client{Timeout: requestTimeout},
-		model:            model,
-		baseURL:          baseURL,
-		keepAlive:        defaultKeepAlive,
-		defaultBatchSize: defaultEmbedBatchSize,
-		retryDelay:       defaultRetryDelay,
-		maxRetryDelay:    defaultMaxRetryDelay,
-		nomicEndpoint:    defaultNomicOnlineEndpoint,
-		nomicModel:       defaultNomicOnlineModel,
-		nomicDimension:   defaultEmbeddingDimension,
-	}
-
-	if e.nomicToken == "" {
-		e.nomicToken = strings.TrimSpace(os.Getenv("SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN"))
-	}
-
-	for _, opt := range opts {
-		opt(e)
-	}
-
-	return e
+type EmbeddingStats struct {
+	TotalDuration time.Duration `json:"total_duration"`
+	LoadDuration  time.Duration `json:"load_duration"`
+	PromptEvalCount int           `json:"prompt_eval_count"`
 }
 
-type embedRequestBody struct {
-	Model     string   `json:"model"`
-	Input     []string `json:"input"`
-	Truncate  *bool    `json:"truncate,omitempty"`
-	KeepAlive string   `json:"keep_alive,omitempty"`
+type BatchedEmbeddingStats struct {
+	TotalDuration time.Duration `json:"total_duration"`
+	LoadDuration  time.Duration `json:"load_duration"`
+	PromptEvalCount int           `json:"prompt_eval_count"`
+	Batches int           `json:"batches"`
+	Retries int           `json:"retries"`
+	FinalBatchSize int      `json:"final_batch_size"`
+	ColdStartBatches int          `json:"cold_start_batches"`
 }
 
-type embedResponse struct {
-	Embeddings      [][]float32 `json:"embeddings"`
-	TotalDuration   int64       `json:"total_duration,omitempty"`
-	LoadDuration    int64       `json:"load_duration,omitempty"`
-	PromptEvalCount int         `json:"prompt_eval_count,omitempty"`
+type embedderInstance interface {
+	embed (ctx context.Context, texts []string , taskType string) ([][]float32, *EmbeddingStats, error)
 }
 
-type nomicOnlineEmbedRequestBody struct {
+
+//--------------------------------------------
+// ollama embedder specific types and functions
+//--------------------------------------------
+
+type ollmaEmbedder struct {
+	httpClient *http.Client
+	baseURL 	string
+	modelName   string
+	keepAlive   string
+}
+
+type ollamaEmbeddingRequest struct {
+	Model string `json:"model"`
+	Input []string `json:"input"`
+	Truncate bool `json:"truncate,omitempty"`
+	KeepAlive string `json:"keep_alive,omitempty"`
+}
+
+type ollamaEmbeddingResponse struct {
+	Embeddings [][]float32 `json:"embeddings"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int `json:"prompt_eval_count,omitempty"`
+}
+
+func (oe *ollmaEmbedder) embed(ctx context.Context, texts []string, taskType string) ([][]float32, *EmbeddingStats, error) {
+	if len(texts) == 0 {
+		return nil, nil, ErrEmptyInput
+	}
+
+	toTruncate := true
+
+	reqBody := ollamaEmbeddingRequest{
+		Model: oe.modelName,
+		Input: texts,
+		KeepAlive: oe.keepAlive,
+		Truncate: toTruncate,
+	}
+
+	jsonInpData, err := json.Marshal(reqBody)
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusInternalServerError,
+			Err : errors.Join(ErrEmbeddingFailed , err),
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/api/embed", oe.baseURL), bytes.NewBuffer(jsonInpData))
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusInternalServerError,
+			Err : errors.Join(ErrFailedRequest , err),
+		}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := oe.httpClient.Do(req)
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusServiceUnavailable,
+			Err : errors.Join(ErrFailedRequest , err),
+		}
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return  nil, nil, &EmbeddingErrors{
+			StatusCode: resp.StatusCode,
+			Err : errors.Join(ErrInvalidResponse , err),
+		}
+	}
+
+	var embeddingResp ollamaEmbeddingResponse
+
+	// use decoder to decode as it's more efficient for streaming / large response body
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp) ; err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusBadGateway,
+			Err : errors.Join(ErrInvalidResponse , err),
+		}
+	}
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusBadGateway,
+			Err : errors.Join(ErrInvalidResponse , err),
+		}
+	}
+
+	if len(embeddingResp.Embeddings) != len(texts) {
+		return nil, &EmbeddingStats{}, &EmbeddingErrors{
+			StatusCode: http.StatusBadGateway,
+			Err : errors.Join(ErrInvalidResponse , fmt.Errorf("mismatched embedding count")),
+		}
+	}
+
+	stats := &EmbeddingStats{
+		TotalDuration: time.Duration(embeddingResp.TotalDuration),
+		LoadDuration: time.Duration(embeddingResp.LoadDuration),
+		PromptEvalCount: embeddingResp.PromptEvalCount,
+	}
+
+	return embeddingResp.Embeddings, stats, nil
+}
+
+//--------------------------------------------
+// nomic online embedder specific types and functions
+//--------------------------------------------
+
+type nomicOnlineEmbedder struct {
+	httpClient *http.Client
+	endpoint   string
+	modelName  string
+	token      string
+	dimension  int
+}
+
+type nomicEmbedRequest struct {
 	Model          string   `json:"model"`
 	Texts          []string `json:"texts"`
 	TaskType       string   `json:"task_type"`
 	Dimensionality int      `json:"dimensionality,omitempty"`
 }
 
-type nomicOnlineEmbedResponse struct {
+type nomicEmbedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
-// GetEmbeddings is one call to Ollama /api/embed.
-func (e *Embedder) GetQueryEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
-	embeddings, _, err := e.GetEmbeddingsWithStats(ctx, texts)
-	if err != nil {
-		return nil, err
+func (ne *nomicOnlineEmbedder) embed(ctx context.Context, texts []string, taskType string) ([][]float32, *EmbeddingStats, error) {
+	switch {
+	case len(texts) == 0:
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusBadRequest,
+			Err : ErrEmptyInput,
+		}
+	case ne.token == "":
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusUnauthorized,
+			Err : ErrMissingNomicToken,
+		}
 	}
 
-	return embeddings, nil
+	reqBody := nomicEmbedRequest{
+		Model: ne.modelName,
+		Texts: texts,
+		TaskType: taskType,
+		Dimensionality: ne.dimension,
+	}
+
+	jsonInpData, err := json.Marshal(reqBody)
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusInternalServerError,
+			Err : errors.Join(ErrEmbeddingFailed , err),
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ne.endpoint, bytes.NewBuffer(jsonInpData))
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusInternalServerError,
+			Err : errors.Join(ErrFailedRequest , err),
+		}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ne.token))
+
+	resp, err := ne.httpClient.Do(req)
+
+	if err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusServiceUnavailable,
+			Err : errors.Join(ErrFailedRequest , err),
+		}
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return  nil, nil, &EmbeddingErrors{
+			StatusCode: resp.StatusCode,
+			Err : errors.Join(ErrInvalidResponse , err),
+		}
+	}
+
+	var embeddingResp nomicEmbedResponse
+
+	// use decoder to decode as it's more efficient for streaming / large response body
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp) ; err != nil {
+		return nil, nil, &EmbeddingErrors{
+			StatusCode: http.StatusBadGateway,
+			Err : errors.Join(ErrInvalidResponse , err),
+		}
+	}
+
+	if len(embeddingResp.Embeddings) != len(texts) {
+		return nil, &EmbeddingStats{}, &EmbeddingErrors{
+			StatusCode: http.StatusBadGateway,
+			Err : errors.Join(ErrInvalidResponse , fmt.Errorf("mismatched embedding count")),
+		}
+	}
+
+	for _ , vec := range embeddingResp.Embeddings {
+		if len(vec) != ne.dimension{
+			return nil, &EmbeddingStats{}, &EmbeddingErrors{
+				StatusCode: http.StatusBadGateway,
+				Err: fmt.Errorf("%w: expected %d dimensions, got %d", ErrBadRequestResponse, ne.dimension, len(vec)),
+			}
+		}
+	}
+
+	return embeddingResp.Embeddings, &EmbeddingStats{}, nil
 }
 
-// GetEmbeddings provides backward-compatible access to local embeddings.
-func (e *Embedder) GetEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
-	return e.GetQueryEmbeddings(ctx, texts)
+// Define EmbedderType to distinguish between different embedding service instances
+type EmbedderType string
+
+const (
+	OllamaEmbedderType      EmbedderType = "ollama"
+	NomicOnlineEmbedderType EmbedderType = "nomic"
+)
+
+type Embedder struct {
+	embedder embedderInstance
+	defaultBatchSize int
+	retryDelay time.Duration
+	maxRetryDelay time.Duration
 }
 
-// GetSearchQueryEmbedding returns one embedding vector for online query-time search.
-// If a Nomic token is configured, it uses Nomic's hosted endpoint with task_type=search_query.
-// Otherwise, it falls back to the local embedding endpoint.
+type config struct {
+	batchSize     int
+	retryDelay    time.Duration
+	maxRetryDelay time.Duration
+
+	// ollama
+	ollamaBaseURL string
+	ollamaModel   string
+	keepAlive     string
+
+	// nomic
+	nomicToken     string
+	nomicEndpoint  string
+	nomicModel     string
+	nomicDimension int
+
+	// HTTP transport tuning
+	maxIdleConnsPerHost int
+}
+
+type Option func(*config)
+
+func WithBatchSize(batchSize int) Option {
+	return  func(c *config) {
+		if batchSize > 0{
+			c.batchSize = batchSize
+		}
+	}
+}
+
+func WithRetryDelay(retryDelay time.Duration) Option {
+	return func(c *config) {
+		if retryDelay > 0 {
+			c.retryDelay = retryDelay
+		}
+	}
+}
+
+func WithMaxRetryDelay(maxRetryDelay time.Duration) Option {
+	return func(c *config) {
+		if maxRetryDelay > 0 {
+			c.maxRetryDelay = maxRetryDelay
+		}
+	}
+}
+
+func WithOllamaBaseURL(URL string) Option{
+	return func(c *config){
+		if URL != "" {
+			c.ollamaBaseURL = URL
+		}
+	}
+}
+
+func WithKeepAlive(keepAlive string) Option {
+	return func(c *config) {
+		if keepAlive != "" {
+			c.keepAlive = keepAlive
+		}
+	}
+}
+
+func WithOllamaModel(model string) Option {
+	return func(c *config) {
+		if model != "" {
+			c.ollamaModel = model
+		}
+	}
+}
+
+// to overwrite default token provided via environment variable
+func WithNomicToken(token string) Option {
+	return func(c *config) {
+		if token != "" {
+			c.nomicToken = token
+		}
+	}
+}
+
+func WithNomicEndpoint(endpoint string) Option {
+	return func(c *config) {
+		if endpoint != "" {
+			c.nomicEndpoint = endpoint
+		}
+	}
+}
+
+func WithNomicModel(model string) Option {
+	return func(c *config) {
+		if model != "" {
+			c.nomicModel = model
+		}
+	}
+}
+
+func WithNomicDimension(dimension int) Option{
+	return func(c *config) {
+		if dimension > 0{
+			c.nomicDimension = dimension
+		}
+	}
+}
+
+func WithMaxIdleConnsPerHost(maxIdleConnsPerHost int) Option {
+	return func(c *config) {
+		if maxIdleConnsPerHost > 0 {
+			c.maxIdleConnsPerHost = maxIdleConnsPerHost
+		}
+	}
+}
+
+
+// ---------------------------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------------------------
+
+// NewEmbedder builds an Embedder backed by the requested backend.
+//
+// Example — Nomic :
+//
+//	e, err := embedder.NewEmbedder(embedder.BackendNomic,
+//	    embedder.WithNomicToken(cfg.NomicToken),
+//	    embedder.WithMaxIdleConnsPerHost(cfg.EmbeddingWorkerCount),
+//	)
+//
+// Example — Ollama :
+//
+//	e, err := embedder.NewEmbedder(embedder.BackendOllama,
+//	    embedder.WithOllamaBaseURL("http://localhost:11434"),
+//	    embedder.WithMaxIdleConnsPerHost(cfg.EmbeddingWorkerCount),
+//	)
+func NewEmbedder(embedderType EmbedderType, opts ...Option) (*Embedder, error) {
+	cfg := &config{
+		batchSize: defaultEmbedBatchSize,
+		retryDelay: defaultRetryDelay,
+		maxRetryDelay: defaultMaxRetryDelay,
+		ollamaBaseURL: defaultOllamaModelBaseURL,
+		ollamaModel: defaultOllamaEmbeddingModel,
+		keepAlive: defaultKeepAlive,
+		nomicEndpoint: defaultNomicOnlineEndpoint,
+		nomicModel: defaultNomicOnlineModel,
+		nomicDimension: defaultEmbeddingDimension,
+		maxIdleConnsPerHost: 8, // default value for max idle connections per host
+	}
+
+	cfg.nomicToken = strings.TrimSpace(os.Getenv("SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN"))
+
+	// all those option functions returns an anonymous function which takes in the config struct and updates the relevant fields if the provided value is valid
+	for _ , opt := range opts{
+		opt(cfg)
+	}
+
+	transport := buildTransport(cfg.maxIdleConnsPerHost)
+	httpClient := &http.Client{Transport: transport, Timeout: requestTimeout}
+
+	var instance embedderInstance
+	switch embedderType {
+	case OllamaEmbedderType:
+		instance = &ollmaEmbedder{
+			httpClient: httpClient,
+			baseURL: cfg.ollamaBaseURL,
+			modelName: cfg.ollamaModel,
+			keepAlive: cfg.keepAlive,
+		}
+	case NomicOnlineEmbedderType:
+		instance = &nomicOnlineEmbedder{
+			httpClient: httpClient,
+			endpoint: cfg.nomicEndpoint,
+			modelName: cfg.nomicModel,
+			token: cfg.nomicToken,
+			dimension: cfg.nomicDimension,
+		}
+	default:
+		return nil, ErrUnknownEmbeddingInstance
+	}
+
+	return  &Embedder{
+		embedder: instance,
+		defaultBatchSize: cfg.batchSize,
+		retryDelay: cfg.retryDelay,
+		maxRetryDelay: cfg.maxRetryDelay,
+	}, nil
+
+}
+
+
+func buildTransport(maxIdleConnsPerHost int) *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		ForceAttemptHTTP2: true,
+		MaxIdleConns: max(64 , maxIdleConnsPerHost * 4),
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
+		IdleConnTimeout: idleConnTimeout,
+		TLSHandshakeTimeout: tlsHandshakeTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		DialContext: (&net.Dialer{
+			Timeout: dialTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	}
+}
+
+
+// ------------------------------------------
+// Public API
+// ------------------------------------------
+
 func (e *Embedder) GetSearchQueryEmbedding(ctx context.Context, query string) ([]float32, error) {
-	trimmedQuery := strings.TrimSpace(query)
-	if trimmedQuery == "" {
+	query = strings.TrimSpace(query)
+	if query == "" {
 		return nil, &EmbeddingErrors{StatusCode: http.StatusBadRequest, Err: ErrEmptyInput}
 	}
 
-	if e.nomicToken != "" {
-		return e.getNomicSearchQueryEmbedding(ctx, trimmedQuery)
-	}
-
-	res, err := e.GetQueryEmbeddings(ctx, []string{trimmedQuery})
+	embeddings, _, err := e.embedder.embed(ctx, []string{query}, "search_query")
 	if err != nil {
 		return nil, err
 	}
-	if len(res) == 0 {
+	if len(embeddings) == 0 {
 		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: ErrBadRequestResponse}
 	}
 
-	return res[0], nil
+	return embeddings[0], nil
 }
 
-func (e *Embedder) getNomicSearchQueryEmbedding(ctx context.Context, query string) ([]float32, error) {
-	if e.nomicToken == "" {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusUnauthorized, Err: ErrMissingNomicToken}
-	}
-
-	payload, err := json.Marshal(nomicOnlineEmbedRequestBody{
-		Model:          e.nomicModel,
-		Texts:          []string{"search_query: " + query},
-		TaskType:       "search_query",
-		Dimensionality: e.nomicDimension,
-	})
-	if err != nil {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrEmbeddingFailed, err)}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.nomicEndpoint, bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrFailedRequest, err)}
-	}
-
-	req.Header.Set("Authorization", "Bearer "+e.nomicToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusServiceUnavailable, Err: errors.Join(ErrFailedRequest, err)}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
-		if readErr == nil {
-			trimmedBody := strings.TrimSpace(string(body))
-			if trimmedBody != "" {
-				return nil, &EmbeddingErrors{StatusCode: resp.StatusCode, Err: fmt.Errorf("%w: %s", ErrInvalidResponse, trimmedBody)}
-			}
-		}
-		return nil, &EmbeddingErrors{StatusCode: resp.StatusCode, Err: ErrInvalidResponse}
-	}
-
-	var embedResp nomicOnlineEmbedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: errors.Join(ErrInvalidResponse, err)}
-	}
-
-	if len(embedResp.Embeddings) != 1 {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: ErrBadRequestResponse}
-	}
-
-	vector := embedResp.Embeddings[0]
-	if len(vector) != e.nomicDimension {
-		return nil, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: fmt.Errorf("%w: expected %d dimensions, got %d", ErrBadRequestResponse, e.nomicDimension, len(vector))}
-	}
-
-	return vector, nil
-}
-
-func (e *Embedder) GetEmbeddingsWithStats(ctx context.Context, texts []string) ([][]float32, EmbeddingStats, error) {
-	textsLen := len(texts)
-	if textsLen == 0 {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusBadRequest, Err: ErrEmptyInput}
-	}
-
-	truncate := true
-	payload, err := json.Marshal(embedRequestBody{
-		Model:     e.model,
-		Input:     texts,
-		Truncate:  &truncate,
-		KeepAlive: e.keepAlive,
-	})
-	if err != nil {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrEmbeddingFailed, err)}
-	}
-
-	queryURL := fmt.Sprintf("%s/api/embed", e.baseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, queryURL, bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusInternalServerError, Err: errors.Join(ErrFailedRequest, err)}
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusServiceUnavailable, Err: errors.Join(ErrFailedRequest, err)}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: resp.StatusCode, Err: ErrInvalidResponse}
-	}
-
-	var embedResp embedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: errors.Join(ErrInvalidResponse, err)}
-	}
-
-	if len(embedResp.Embeddings) != textsLen {
-		return nil, EmbeddingStats{}, &EmbeddingErrors{StatusCode: http.StatusBadGateway, Err: ErrBadRequestResponse}
-	}
-
-	stats := EmbeddingStats{
-		TotalDuration:   time.Duration(embedResp.TotalDuration),
-		LoadDuration:    time.Duration(embedResp.LoadDuration),
-		PromptEvalCount: embedResp.PromptEvalCount,
-	}
-
-	return embedResp.Embeddings, stats, nil
-}
-
-// GetEmbeddingsBatched batches input and applies adaptive batch-size retry strategy.
 func (e *Embedder) GetEmbeddingsBatched(ctx context.Context, texts []string, batchSize int) ([][]float32, error) {
 	embeddings, _, err := e.GetEmbeddingsBatchedWithStats(ctx, texts, batchSize)
-	if err != nil {
-		return nil, err
-	}
-
-	return embeddings, nil
+	return embeddings, err
 }
 
 func (e *Embedder) GetEmbeddingsBatchedWithStats(ctx context.Context, texts []string, batchSize int) ([][]float32, BatchedEmbeddingStats, error) {
@@ -405,7 +599,9 @@ func (e *Embedder) GetEmbeddingsBatchedWithStats(ctx context.Context, texts []st
 			end = len(texts)
 		}
 
-		embeddings, oneStats, err := e.GetEmbeddingsWithStats(ctx, texts[i:end])
+		// Chunk embedding always uses search_document task type so Nomic
+		// applies the correct asymmetric projection for the indexed side.
+		embeddings, oneStats, err := e.embedder.embed(ctx, texts[i:end], "search_document")
 		if err == nil {
 			all = append(all, embeddings...)
 			i = end
@@ -415,10 +611,11 @@ func (e *Embedder) GetEmbeddingsBatchedWithStats(ctx context.Context, texts []st
 			stats.LoadDuration += oneStats.LoadDuration
 			stats.PromptEvalCount += oneStats.PromptEvalCount
 			stats.Batches++
-			if oneStats.LoadDuration >= coldStartThreshold {
+			if oneStats.LoadDuration >= coldStartDurationThreshold {
 				stats.ColdStartBatches++
 			}
 
+			// Recover toward original batch size after a successful smaller batch.
 			if currentBatch < originalBatch {
 				currentBatch = min(originalBatch, currentBatch*2)
 			}
@@ -429,6 +626,7 @@ func (e *Embedder) GetEmbeddingsBatchedWithStats(ctx context.Context, texts []st
 			return nil, stats, err
 		}
 
+		// Halve the batch and retry — this handles OOM / rate-limit spikes.
 		currentBatch = max(minEmbedBatchSize, currentBatch/2)
 		stats.Retries++
 		retryCount++
@@ -451,6 +649,7 @@ func (e *Embedder) GetEmbeddingsBatchedWithStats(ctx context.Context, texts []st
 	stats.FinalBatchSize = currentBatch
 	return all, stats, nil
 }
+
 
 func (e *Embedder) nextRetryDelay(retryCount int) time.Duration {
 	if retryCount <= 0 {
@@ -480,9 +679,9 @@ func isRetryableEmbeddingError(err error) bool {
 		return false
 	}
 
-	var embeddingErr *EmbeddingErrors
-	if errors.As(err, &embeddingErr) {
-		switch embeddingErr.StatusCode {
+	var embErr *EmbeddingErrors
+	if errors.As(err, &embErr) {
+		switch embErr.StatusCode {
 		case http.StatusRequestTimeout,
 			http.StatusTooManyRequests,
 			http.StatusInternalServerError,
@@ -490,8 +689,6 @@ func isRetryableEmbeddingError(err error) bool {
 			http.StatusServiceUnavailable,
 			http.StatusGatewayTimeout:
 			return true
-		default:
-			return false
 		}
 	}
 
