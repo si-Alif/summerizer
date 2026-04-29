@@ -16,7 +16,6 @@ I wanted to understand what actually goes wrong in a RAG system once you move pa
 
 So I built Summerizer as a real backend project ; not a prototype, not a notebook ; with queue-based ingestion, worker pools, consistency controls, vector retrieval, and phase-based evaluation to prove that changes actually helped. Every design decision came from either hitting a problem or actively thinking about what would break next.
 
-
 ---
 
 ## What It Does
@@ -115,13 +114,13 @@ By the end I had phase-based logs, DB snapshots, and E2E automation scripts ; no
 
 ## Engineering Decisions
 
-|Problem|Decision|Why It Matters|
-|---|---|---|
-|Inline embedding made ingestion fragile under model pressure|Split into two independent queues: `sources` (ingestion) + `embedding_jobs` (embedding) with dedicated worker pools|Ingestion completes fast. Embedding failures don't cascade backwards. Query path stays unaffected.|
-|Concurrent workers racing to claim the same source|`FOR UPDATE SKIP LOCKED` inside a transaction + optimistic versioning on every state transition|No double-processing. Edit conflicts are explicit errors, not silent corruption.|
-|Vector search without another service to run|PostgreSQL + `pgvector` (`vector(768)`) + HNSW cosine index|One fewer thing to operate. Retrieval performance holds at this scale and the operational simplicity is worth it.|
-|Single embedder = single point of failure for search|Online query embedding + local fallback path|Search and ask stay available even when one embedding path is degraded.|
-|"It's better now" isn't evidence|Phase-based logs, DB snapshots, strict retrieval evals, E2E automation|Every optimization claim is backed by a captured measurement. The numbers are in `tmp/`.|
+| Problem                                                      | Decision                                                                                                            | Why It Matters                                                                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Inline embedding made ingestion fragile under model pressure | Split into two independent queues: `sources` (ingestion) + `embedding_jobs` (embedding) with dedicated worker pools | Ingestion completes fast. Embedding failures don't cascade backwards. Query path stays unaffected.                |
+| Concurrent workers racing to claim the same source           | `FOR UPDATE SKIP LOCKED` inside a transaction + optimistic versioning on every state transition                     | No double-processing. Edit conflicts are explicit errors, not silent corruption.                                  |
+| Vector search without another service to run                 | PostgreSQL + `pgvector` (`vector(768)`) + HNSW cosine index                                                         | One fewer thing to operate. Retrieval performance holds at this scale and the operational simplicity is worth it. |
+| Single embedder = single point of failure for search         | Online query embedding + local fallback path                                                                        | Search and ask stay available even when one embedding path is degraded.                                           |
+| "It's better now" isn't evidence                             | Phase-based logs, DB snapshots, strict retrieval evals, E2E automation                                              | Every optimization claim is backed by a captured measurement. The numbers are in `tmp/`.                          |
 
 ---
 
@@ -197,6 +196,38 @@ export SUMMERIZER_GEMINI_MODEL="gemini-3-flash-preview"
 
 # Migrations
 make db/migrations/up
+
+---
+
+## Render Deployment
+
+### Required Environment Variables
+
+- `PORT`
+- `DATABASE_URL` or `SUMMERIZER_DB_DSN`
+- `SUMMERIZER_NOMIC_ONLINE_EMBEDDING_MODEL_TOKEN`
+- `SUMMERIZER_GEMINI_API_KEY` (or `GEMINI_API_KEY` / `GOOGLE_API_KEY`)
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_SENDER`
+- `CORS_TRUSTED_ORIGINS`
+
+### Render Settings (Native Go Build)
+
+- Build Command:
+    - `go build -o bin/api ./cmd/api`
+- Start Command:
+    - `./bin/api -env=production`
+
+### Migrations
+
+Use Render's Pre-Deploy Command to apply migrations:
+
+- `migrate -path ./migrations -database $DATABASE_URL up`
+
+If you use `SUMMERIZER_DB_DSN` instead, replace `$DATABASE_URL` accordingly.
 
 # API
 make run/api

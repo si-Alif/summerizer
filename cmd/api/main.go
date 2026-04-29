@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,7 @@ type config struct {
 type application struct {
 	config           config
 	logger           *slog.Logger
+	db               *sql.DB
 	models           data.Models
 	workers          *worker.Pool
 	embeddingWorkers *worker.EmbeddingPool
@@ -89,16 +91,65 @@ type application struct {
 	wg               sync.WaitGroup
 }
 
+func envString(key, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func envStringSlice(key string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil
+	}
+	return strings.Fields(value)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func main() {
 	processStartedAt := time.Now()
 
 	var cfg config
 
-	flag.IntVar(&cfg.port, "port", 4000, "API server port")
-	flag.StringVar(&cfg.env, "env", "development", "Environment (development | production | test)")
+	defaultPort := envInt("PORT", 4000)
+	defaultEnv := envString("ENV", envString("SUMMERIZER_ENV", "development"))
+	defaultDBDSN := envString("SUMMERIZER_DB_DSN", envString("DATABASE_URL", ""))
+	defaultSMTPHost := envString("SMTP_HOST", "")
+	defaultSMTPPort := envInt("SMTP_PORT", 0)
+	defaultSMTPUsername := envString("SMTP_USERNAME", "")
+	defaultSMTPPassword := envString("SMTP_PASSWORD", "")
+	defaultSMTPSender := envString("SMTP_SENDER", "")
+
+	cfg.cors.trustedOrigins = envStringSlice("CORS_TRUSTED_ORIGINS")
+
+	flag.IntVar(&cfg.port, "port", defaultPort, "API server port")
+	flag.StringVar(&cfg.env, "env", defaultEnv, "Environment (development | production | test)")
 
 	// DB connection pool settings
-	flag.StringVar(&cfg.db.dsn, "db-dsn", "", "PostgreSQL data source name")
+	flag.StringVar(&cfg.db.dsn, "db-dsn", defaultDBDSN, "PostgreSQL data source name")
 	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max idle time for a connection")
@@ -124,11 +175,11 @@ func main() {
 	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
 
 	// SMTP settings
-	flag.StringVar(&cfg.smtp.host, "smtp-host", "", "SMTP server host")
-	flag.IntVar(&cfg.smtp.port, "smtp-port", 0, "SMTP server port")
-	flag.StringVar(&cfg.smtp.username, "smtp-username", "", "SMTP server username")
-	flag.StringVar(&cfg.smtp.password, "smtp-password", "", "SMTP server password")
-	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "", "Email address of the sender")
+	flag.StringVar(&cfg.smtp.host, "smtp-host", defaultSMTPHost, "SMTP server host")
+	flag.IntVar(&cfg.smtp.port, "smtp-port", defaultSMTPPort, "SMTP server port")
+	flag.StringVar(&cfg.smtp.username, "smtp-username", defaultSMTPUsername, "SMTP server username")
+	flag.StringVar(&cfg.smtp.password, "smtp-password", defaultSMTPPassword, "SMTP server password")
+	flag.StringVar(&cfg.smtp.sender, "smtp-sender", defaultSMTPSender, "Email address of the sender")
 	flag.BoolVar(&cfg.rollout.inline_embedding_enabled, "inline-embedding-enabled", false, "Deprecated: inline embedding path has been removed")
 	flag.BoolVar(&cfg.rollout.async_embedding_enabled, "async-embedding-enabled", true, "Enable async embedding workflow (required)")
 	flag.BoolVar(&cfg.rollout.dual_write_embedding_jobs, "dual-write-embedding-jobs", false, "Deprecated: dual-write path has been removed")
@@ -149,6 +200,43 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	if strings.TrimSpace(cfg.db.dsn) == "" {
+		logger.Error("missing database DSN", "hint", "set SUMMERIZER_DB_DSN or DATABASE_URL (or use -db-dsn)")
+		os.Exit(1)
+	}
+
+	missingSMTP := []string{}
+	if strings.TrimSpace(cfg.smtp.host) == "" {
+		missingSMTP = append(missingSMTP, "SMTP_HOST")
+	}
+	if cfg.smtp.port == 0 {
+		missingSMTP = append(missingSMTP, "SMTP_PORT")
+	}
+	if strings.TrimSpace(cfg.smtp.username) == "" {
+		missingSMTP = append(missingSMTP, "SMTP_USERNAME")
+	}
+	if strings.TrimSpace(cfg.smtp.password) == "" {
+		missingSMTP = append(missingSMTP, "SMTP_PASSWORD")
+	}
+	if strings.TrimSpace(cfg.smtp.sender) == "" {
+		missingSMTP = append(missingSMTP, "SMTP_SENDER")
+	}
+	if len(missingSMTP) > 0 {
+		logger.Error("missing SMTP configuration", "missing", strings.Join(missingSMTP, ", "))
+		os.Exit(1)
+	}
+
+	geminiAPIKey := firstNonEmpty(
+		os.Getenv("SUMMERIZER_GEMINI_API_KEY"),
+		os.Getenv("GEMINI_API_KEY"),
+		os.Getenv("GOOGLE_API_KEY"),
+		os.Getenv("SUMMERIZER_HF_API_KEY"),
+	)
+	if geminiAPIKey == "" {
+		logger.Error("missing Gemini API key", "hint", "set SUMMERIZER_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY")
+		os.Exit(1)
+	}
 
 	if !cfg.rollout.async_embedding_enabled {
 		logger.Error("invalid rollout configuration",
@@ -313,6 +401,7 @@ func main() {
 	app := application{
 		config:           cfg,
 		logger:           logger,
+		db:               db,
 		models:           models,
 		workers:          workerPool,
 		embeddingWorkers: embeddingPool,
