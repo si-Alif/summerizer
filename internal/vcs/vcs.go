@@ -2,12 +2,17 @@ package vcs
 
 import "runtime/debug"
 
-func Version() string {
-	bi, ok := debug.ReadBuildInfo()
+var version string
 
-	if ok {
+func Version() string {
+	if version != "" {
+		return version
+	}
+
+	bi, ok := debug.ReadBuildInfo()
+	if ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		return bi.Main.Version
 	}
 
-	return ""
+	return "dev"
 }
