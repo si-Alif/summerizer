@@ -53,7 +53,7 @@ flowchart LR
     EMB --> DB
 
     SEARCH --> DB
-    SEARCH --> QEMB[Query Embedder<br/>Nomic online (default)<br/>Ollama offline (optional)]
+    SEARCH --> QEMB[Query Embedder<br/>Nomic online - default<br/>Ollama offline - optional]
     QEMB --> DB
 
     ASK --> SEARCH
