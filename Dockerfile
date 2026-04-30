@@ -10,9 +10,9 @@ RUN go mod download
 COPY . .
 
 ARG VERSION=dev
-RUN GIT_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev") && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-s -w -X github.com/si-Alif/summerizer/internal/vcs.version=${GIT_VERSION}" \
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-s -w -X github.com/si-Alif/summerizer/internal/vcs.version=${VERSION}" \
     -o /app/bin/api ./cmd/api
 RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.1
 
