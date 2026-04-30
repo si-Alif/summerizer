@@ -31,29 +31,29 @@ So I built Summerizer as a real backend project ; not a prototype, not a noteboo
 
 ```mermaid
 flowchart LR
-    C[Client / Frontend] --> API[Go REST API\ncmd/api]
+    C[Client / Frontend] --> API[Go REST API<br/>cmd/api]
 
-    API --> AUTH[Auth + Middleware\nrate-limit, recover, activate]
+    API --> AUTH[Auth + Middleware<br/>rate-limit, recover, activate]
     AUTH --> APP[Application Services]
 
     APP --> COL[Collections + Sources]
     APP --> SEARCH[Search Service]
     APP --> ASK[Ask Service]
 
-    COL --> DB[(PostgreSQL + pgvector)]
+    COL --> DB[PostgreSQL + pgvector]
 
-    COL --> INQ[(sources queue state)]
+    COL --> INQ[sources queue state]
     INQ --> IW[Ingestion Workers]
-    IW --> PIPE[Ingestion Pipeline\nfetch → clean → chunk → store]
+    IW --> PIPE[Ingestion Pipeline<br/>fetch -> clean -> chunk -> store]
     PIPE --> DB
 
-    PIPE --> EJQ[(embedding_jobs queue)]
+    PIPE --> EJQ[embedding_jobs queue]
     EJQ --> EW[Embedding Workers]
     EW --> EMB[Embedder]
     EMB --> DB
 
     SEARCH --> DB
-    SEARCH --> QEMB[Query Embedder\nNomic online (default)\nOllama offline (optional)]
+    SEARCH --> QEMB[Query Embedder<br/>Nomic online (default)<br/>Ollama offline (optional)]
     QEMB --> DB
 
     ASK --> SEARCH
