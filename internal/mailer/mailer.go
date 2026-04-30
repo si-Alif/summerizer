@@ -25,6 +25,7 @@ func NewMailer(host string, port int, username, password, sender string) (*Maile
 		mail.WithUsername(username),
 		mail.WithPassword(password),
 		mail.WithTimeout(5*time.Second),
+		mail.WithPort(port),
 	)
 	if err != nil {
 		return nil, err
