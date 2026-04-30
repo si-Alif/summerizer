@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"errors"
 	"expvar"
 	"fmt"
@@ -150,6 +151,26 @@ func (app *application) requireActivatedUser(next http.HandlerFunc) http.Handler
 	})
 
 	return app.requireAuthenticatedUser(fn)
+}
+
+func (app *application) requireDebugToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(r.Header.Get("X-Debug-Token"))
+		if token == "" {
+			app.errorResponse(w, r, http.StatusUnauthorized, "missing debug token")
+			return
+		}
+		if app.config.debugVarsToken == "" {
+			app.errorResponse(w, r, http.StatusForbidden, "debug vars disabled")
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(app.config.debugVarsToken)) != 1 {
+			app.errorResponse(w, r, http.StatusForbidden, "invalid debug token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (app *application) enableCORS(next http.Handler) http.Handler {

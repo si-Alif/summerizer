@@ -53,7 +53,7 @@ flowchart LR
     EMB --> DB
 
     SEARCH --> DB
-    SEARCH --> QEMB[Query Embedder\nNomic online + local fallback]
+    SEARCH --> QEMB[Query Embedder\nNomic online (default)\nOllama offline (optional)]
     QEMB --> DB
 
     ASK --> SEARCH
@@ -119,7 +119,7 @@ By the end I had phase-based logs, DB snapshots, and E2E automation scripts ; no
 | Inline embedding made ingestion fragile under model pressure | Split into two independent queues: `sources` (ingestion) + `embedding_jobs` (embedding) with dedicated worker pools | Ingestion completes fast. Embedding failures don't cascade backwards. Query path stays unaffected.                |
 | Concurrent workers racing to claim the same source           | `FOR UPDATE SKIP LOCKED` inside a transaction + optimistic versioning on every state transition                     | No double-processing. Edit conflicts are explicit errors, not silent corruption.                                  |
 | Vector search without another service to run                 | PostgreSQL + `pgvector` (`vector(768)`) + HNSW cosine index                                                         | One fewer thing to operate. Retrieval performance holds at this scale and the operational simplicity is worth it. |
-| Single embedder = single point of failure for search         | Online query embedding + local fallback path                                                                        | Search and ask stay available even when one embedding path is degraded.                                           |
+| Embedding backend flexibility                                | Configurable backend (Nomic online by default, Ollama offline optional)                                             | Lets you trade cost/latency for local control without redesigning the pipeline.                                   |
 | "It's better now" isn't evidence                             | Phase-based logs, DB snapshots, strict retrieval evals, E2E automation                                              | Every optimization claim is backed by a captured measurement. The numbers are in `tmp/`.                          |
 
 ---
@@ -147,7 +147,7 @@ Treat these as workload-specific engineering evidence, not universal benchmarks.
 - **Go 1.25**
 - **PostgreSQL 16 + pgvector** -> storage, queue state, and vector index all in one place
 - **httprouter, pgx** -> no framework, deliberate choices
-- **Embedder** -> local Nomic via Ollama for ingestion, online path for query embedding
+- **Embedder** -> Nomic online (default) or Ollama offline; backend chosen at startup
 - **LLM** -> Gemini API for answer generation
 - **Docker Compose** -> local infra only
 
@@ -164,12 +164,35 @@ Working:
 - Semantic search and grounded ask with source citations
 - PostgreSQL migrations with HNSW vector index strategy
 - Middleware: auth, activation gate, rate limiter, panic recovery
+- Embedding backend selection (online Nomic by default; offline Ollama optional)
 
 Honest gaps 🐱:
 
 - URL type detection covers `web/youtube/pdf` but only web ingestion is implemented right now
 - Sharing/permissions model (owner/editor/viewer/public) is designed, not built yet
 - Integration test coverage and deployment automation are in progress
+
+---
+
+## Chunking Strategy
+
+- Token-aware chunking using the `cl100k_base` tokenizer
+- Default target budget: 400 tokens per chunk with 1-sentence overlap
+- Prefix budget is enforced: document title + section path are added to `EmbedText`, and token budget is reduced accordingly
+- Section-aware boundaries: chunks do not cross section path changes
+- Overlap only applies to paragraph/list content (no overlap for code/table blocks)
+- Oversized units split by words; code/table blocks prefer line-based splitting
+- List blocks are split from semicolon or markdown list formats; sentence splitter handles common abbreviations
+- Chunk metadata includes section title/path, heading level, block type(s), and embed-text token counts
+
+## Fetcher Optimizations
+
+- Custom HTTP transport tuned for throughput (HTTP/2, keep-alives, connection limits)
+- Per-attempt timeout (15s) + total fetch timeout (90s)
+- Retry policy: max 3 attempts with exponential backoff + jitter, honors Retry-After
+- Max body size 10MB; reads one extra byte to detect oversized payloads
+- Rejects non-HTTP(S) URLs and non-HTML content types early
+- Uses readability extraction; fails fast on empty content
 
 ---
 
@@ -197,6 +220,13 @@ export SUMMERIZER_GEMINI_MODEL="gemini-3-flash-preview"
 # Migrations
 make db/migrations/up
 
+# API
+make run/api
+
+# Verify
+curl http://localhost:4000/v1/healthcheck
+```
+
 ---
 
 ## Render Deployment
@@ -213,28 +243,30 @@ make db/migrations/up
 - `SMTP_PASSWORD`
 - `SMTP_SENDER`
 - `CORS_TRUSTED_ORIGINS`
+- `SUMMERIZER_DEBUG_VARS_TOKEN`
 
-### Render Settings (Native Go Build)
+### Render Settings (Docker)
 
-- Build Command:
-    - `go build -o bin/api ./cmd/api`
-- Start Command:
-    - `./bin/api -env=production`
+- Use the Dockerfile in this repo.
+- The container entrypoint runs migrations at startup and then launches the API.
+- By default the container runs with `-env=production` (see Dockerfile `CMD`).
 
 ### Migrations
 
-Use Render's Pre-Deploy Command to apply migrations:
+The entrypoint resolves the DSN in this order:
 
-- `migrate -path ./migrations -database $DATABASE_URL up`
+1. `SUMMERIZER_DB_DSN`
+2. `DATABASE_URL`
 
-If you use `SUMMERIZER_DB_DSN` instead, replace `$DATABASE_URL` accordingly.
+It then runs:
 
-# API
-make run/api
+- `migrate -path /app/migrations -database "$DSN" up`
 
-# Verify
-curl http://localhost:4000/v1/healthcheck
-```
+### Debug Vars
+
+Set `SUMMERIZER_DEBUG_VARS_TOKEN` and query with:
+
+- `curl -H "X-Debug-Token: $SUMMERIZER_DEBUG_VARS_TOKEN" https://<host>/debug/vars`
 
 ### Fast Verification
 

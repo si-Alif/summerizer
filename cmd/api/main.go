@@ -72,6 +72,7 @@ type config struct {
 		password string
 		sender   string
 	}
+	debugVarsToken string
 }
 
 type application struct {
@@ -137,6 +138,7 @@ func main() {
 	defaultSMTPUsername := envString("SMTP_USERNAME", "")
 	defaultSMTPPassword := envString("SMTP_PASSWORD", "")
 	defaultSMTPSender := envString("SMTP_SENDER", "")
+	defaultDebugVarsToken := envString("SUMMERIZER_DEBUG_VARS_TOKEN", "")
 
 	cfg.cors.trustedOrigins = envStringSlice("CORS_TRUSTED_ORIGINS")
 
@@ -175,6 +177,7 @@ func main() {
 	flag.StringVar(&cfg.smtp.username, "smtp-username", defaultSMTPUsername, "SMTP server username")
 	flag.StringVar(&cfg.smtp.password, "smtp-password", defaultSMTPPassword, "SMTP server password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", defaultSMTPSender, "Email address of the sender")
+	flag.StringVar(&cfg.debugVarsToken, "debug-vars-token", defaultDebugVarsToken, "Debug vars access token")
 
 	showVer := flag.Bool("version", false, "Show version and exit")
 
