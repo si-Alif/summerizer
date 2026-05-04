@@ -50,12 +50,14 @@ type config struct {
 		stuck_source_threshold time.Duration
 	}
 	embedding_pool struct {
-		worker_count        int
-		poll_interval       time.Duration
-		job_timeout         time.Duration
-		reclaim_interval    time.Duration
-		stuck_job_threshold time.Duration
-		batch_size          int
+		worker_count         int
+		poll_interval        time.Duration
+		job_timeout          time.Duration
+		reclaim_interval     time.Duration
+		stuck_job_threshold  time.Duration
+		batch_size           int
+		claim_batch_size     int
+		max_backoff_interval time.Duration
 	}
 	limiter struct {
 		rps     float64
@@ -160,11 +162,13 @@ func main() {
 
 	// embedding worker pool settings
 	flag.IntVar(&cfg.embedding_pool.worker_count, "embedding-worker-count", 4, "Number of embedding worker goroutines")
-	flag.DurationVar(&cfg.embedding_pool.poll_interval, "embedding-poll-interval", 2*time.Second, "Interval between polls for pending embedding jobs")
+	flag.DurationVar(&cfg.embedding_pool.poll_interval, "embedding-poll-interval", 2*time.Second, "Base interval between fallback polls for pending embedding jobs")
 	flag.DurationVar(&cfg.embedding_pool.job_timeout, "embedding-job-timeout", 5*time.Minute, "Timeout for processing a single embedding job")
 	flag.DurationVar(&cfg.embedding_pool.reclaim_interval, "embedding-reclaim-interval", 1*time.Minute, "Interval between reclaiming stuck embedding jobs")
 	flag.DurationVar(&cfg.embedding_pool.stuck_job_threshold, "embedding-stuck-job-threshold", 10*time.Minute, "Threshold for considering an embedding job as stuck")
 	flag.IntVar(&cfg.embedding_pool.batch_size, "embedding-batch-size", 32, "Target embedding request batch size")
+	flag.IntVar(&cfg.embedding_pool.claim_batch_size, "embedding-claim-batch-size", 5, "Number of embedding jobs to claim per poll")
+	flag.DurationVar(&cfg.embedding_pool.max_backoff_interval, "embedding-max-backoff-interval", 2*time.Minute, "Max backoff interval when embedding queue is empty")
 
 	// rate limiter settings
 	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
@@ -331,14 +335,17 @@ func main() {
 	embeddingPoolStartedAt := time.Now()
 	embeddingPool := worker.NewEmbeddingPool(
 		models,
-		cfg.embedding_pool.worker_count,
-		cfg.embedding_pool.poll_interval,
 		logger,
 		embeddingWorkerEmbedder,
-		cfg.embedding_pool.job_timeout,
-		cfg.embedding_pool.reclaim_interval,
-		cfg.embedding_pool.stuck_job_threshold,
-		cfg.embedding_pool.batch_size,
+		cfg.db.dsn,
+		worker.WithWorkerCount(cfg.embedding_pool.worker_count),
+		worker.WithPollInterval(cfg.embedding_pool.poll_interval),
+		worker.WithJobTimeout(cfg.embedding_pool.job_timeout),
+		worker.WithReclaimInterval(cfg.embedding_pool.reclaim_interval),
+		worker.WithStuckJobThreshold(cfg.embedding_pool.stuck_job_threshold),
+		worker.WithBatchSize(cfg.embedding_pool.batch_size),
+		worker.WithClaimBatchSize(cfg.embedding_pool.claim_batch_size),
+		worker.WithMaxBackoffInterval(cfg.embedding_pool.max_backoff_interval),
 	)
 	logStartupPhase("init_embedding_pool", embeddingPoolStartedAt)
 

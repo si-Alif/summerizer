@@ -8,52 +8,176 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/si-Alif/summerizer/internal/data"
 	"github.com/si-Alif/summerizer/internal/ingestion/embedder"
 )
 
-type EmbeddingPool struct {
-	workerCount       int
-	pollInterval      time.Duration
-	jobTimeout        time.Duration
-	reclaimInterval   time.Duration
-	stuckJobThreshold time.Duration
-	batchSize         int
-	models            data.Models
-	logger            *slog.Logger
-	embedder          *embedder.Embedder
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	startedAt         time.Time
-	firstPollOnce     sync.Once
-	firstClaimOnce    sync.Once
+// embeddingPoolConfig holds all configurable parameters for the embedding pool
+type embeddingPoolConfig struct {
+	workerCount        int
+	pollInterval       time.Duration
+	jobTimeout         time.Duration
+	reclaimInterval    time.Duration
+	stuckJobThreshold  time.Duration
+	batchSize          int
+	claimBatchSize     int
+	maxBackoffInterval time.Duration
 }
 
+// EmbeddingPoolOption is a function that configures an embedding pool setting
+type EmbeddingPoolOption func(*embeddingPoolConfig)
+
+// WithWorkerCount sets the number of embedding worker goroutines
+func WithWorkerCount(n int) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if n > 0 {
+			c.workerCount = n
+		}
+	}
+}
+
+// WithPollInterval sets the base interval between fallback polls
+func WithPollInterval(d time.Duration) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if d > 0 {
+			c.pollInterval = d
+		}
+	}
+}
+
+// WithJobTimeout sets the timeout for processing a single embedding job
+func WithJobTimeout(d time.Duration) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if d > 0 {
+			c.jobTimeout = d
+		}
+	}
+}
+
+// WithReclaimInterval sets the interval for reclaiming stuck embedding jobs
+func WithReclaimInterval(d time.Duration) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if d > 0 {
+			c.reclaimInterval = d
+		}
+	}
+}
+
+// WithStuckJobThreshold sets the threshold for considering an embedding job as stuck
+func WithStuckJobThreshold(d time.Duration) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if d > 0 {
+			c.stuckJobThreshold = d
+		}
+	}
+}
+
+// WithBatchSize sets the target embedding request batch size (for Nomic API calls)
+func WithBatchSize(n int) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if n > 0 {
+			c.batchSize = n
+		}
+	}
+}
+
+// WithClaimBatchSize sets the number of embedding jobs to claim per poll
+func WithClaimBatchSize(n int) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if n > 0 {
+			c.claimBatchSize = n
+		}
+	}
+}
+
+// WithMaxBackoffInterval sets the maximum backoff interval when the embedding queue is empty
+func WithMaxBackoffInterval(d time.Duration) EmbeddingPoolOption {
+	return func(c *embeddingPoolConfig) {
+		if d > 0 {
+			c.maxBackoffInterval = d
+		}
+	}
+}
+
+type EmbeddingPool struct {
+	workerCount        int
+	pollInterval       time.Duration
+	jobTimeout         time.Duration
+	reclaimInterval    time.Duration
+	stuckJobThreshold  time.Duration
+	batchSize          int
+	claimBatchSize     int
+	maxBackoffInterval time.Duration
+	models             data.Models
+	logger             *slog.Logger
+	embedder           *embedder.Embedder
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	startedAt          time.Time
+	firstPollOnce      sync.Once
+	firstClaimOnce     sync.Once
+	wakeCH             chan struct{}
+	dbDSN              string
+}
+
+// NewEmbeddingPool creates a new embedding worker pool with sensible defaults.
+// Required parameters: models, logger, embedderClient, and dbDSN.
+// All other parameters can be customized via options.
+//
+// Example:
+//
+//	pool := worker.NewEmbeddingPool(
+//	    models,
+//	    logger,
+//	    embedder,
+//	    dsn,
+//	    worker.WithWorkerCount(8),
+//	    worker.WithClaimBatchSize(10),
+//	    worker.WithMaxBackoffInterval(5*time.Minute),
+//	)
 func NewEmbeddingPool(
-	data data.Models,
-	workerCount int,
-	pollInterval time.Duration,
+	models data.Models,
 	logger *slog.Logger,
 	embedderClient *embedder.Embedder,
-	jobTimeout time.Duration,
-	reclaimInterval time.Duration,
-	stuckJobThreshold time.Duration,
-	batchSize int,
+	dbDSN string,
+	opts ...EmbeddingPoolOption,
 ) *EmbeddingPool {
-	if batchSize <= 0 {
-		batchSize = 32
+	cfg := &embeddingPoolConfig{
+		workerCount:        4,
+		pollInterval:       2 * time.Second,
+		jobTimeout:         5 * time.Minute,
+		reclaimInterval:    time.Minute,
+		stuckJobThreshold:  10 * time.Minute,
+		batchSize:          32,
+		claimBatchSize:     5,
+		maxBackoffInterval: 2 * time.Minute,
+	}
+
+	// Apply all provided options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Validate and adjust config if needed
+	if cfg.maxBackoffInterval < cfg.pollInterval {
+		cfg.maxBackoffInterval = cfg.pollInterval
 	}
 
 	return &EmbeddingPool{
-		workerCount:       workerCount,
-		pollInterval:      pollInterval,
-		jobTimeout:        jobTimeout,
-		reclaimInterval:   reclaimInterval,
-		stuckJobThreshold: stuckJobThreshold,
-		batchSize:         batchSize,
-		models:            data,
-		logger:            logger,
-		embedder:          embedderClient,
+		workerCount:        cfg.workerCount,
+		pollInterval:       cfg.pollInterval,
+		jobTimeout:         cfg.jobTimeout,
+		reclaimInterval:    cfg.reclaimInterval,
+		stuckJobThreshold:  cfg.stuckJobThreshold,
+		batchSize:          cfg.batchSize,
+		claimBatchSize:     cfg.claimBatchSize,
+		maxBackoffInterval: cfg.maxBackoffInterval,
+		models:             models,
+		logger:             logger,
+		embedder:           embedderClient,
+		wakeCH:             make(chan struct{}, 1),
+		dbDSN:              dbDSN,
 	}
 }
 
@@ -63,9 +187,88 @@ func (p *EmbeddingPool) Start(ctx context.Context) {
 
 	go p.reclaimStuckEmbeddingJobs(ctx)
 
+	p.wg.Add(1)
+
+	go func() {
+		defer p.wg.Done()
+		p.startListener(ctx)
+	}()
+
 	for i := 0; i < p.workerCount; i++ {
 		p.wg.Add(1)
 		go p.run(ctx, i)
+	}
+}
+
+func (p *EmbeddingPool) startListener(ctx context.Context) {
+	retryDelay := 5 * time.Second
+
+	// OUTER LOOP: Handle connection establishment & retry
+	for {
+		// check if context is done before attempting to connect
+		if ctx.Err() != nil {
+			p.logger.Info("embedding job listener stopping")
+			return
+		}
+
+		// try to establish a connection to listen for notifications
+		conn, err := pgx.Connect(ctx, p.dbDSN)
+		if err != nil {
+			// connaction failed , check if it's for context cancellation or an actual error
+			if ctx.Err() != nil {
+				return
+			}
+			// if it's an actual error, log it and retry after a delay
+			p.logger.Error("failed to connect to database for embedding job listener", "error", err)
+			if !sleepWithContext(ctx, retryDelay) {
+				return
+			}
+			continue // try connecting again
+		}
+
+		// Tell DB : "I want to listen for notifications on the embedding_jobs channel"
+		_, err = conn.Exec(ctx, "LISTEN embedding_jobs")
+		if err != nil {
+			// listen failed , check if it's for context cancellation or an actual error
+			if ctx.Err() != nil {
+				_ = conn.Close(context.Background())
+				return // if context is done, close the connection and exit
+			}
+			// if it's an actual error, log it, close the connection, and retry after a delay
+			p.logger.Error("failed to listen for embedding job notifications", "error", err)
+			_ = conn.Close(context.Background())
+			if !sleepWithContext(ctx, retryDelay) {
+				return
+			}
+			continue // try establishing the connection and listening again
+		}
+
+		p.logger.Info("started listening for embedding job notifications")
+
+		// INNER LOOP : Listen for notifications on this connection
+		for {
+			// wait for a notification . This is the actual breaking point which block the goroutine until either a notification is received or an error occurs (like connection loss or context cancellation)
+			_, err := conn.WaitForNotification(ctx)
+			if err != nil {
+				// if WaitForNotification returns an error, it could be due to context cancellation or a connection issue. We need to check which one it is.
+				if ctx.Err() != nil {
+					_ = conn.Close(context.Background()) // if context is done, close the connection and exit
+					p.logger.Info("embedding job listener stopping")
+					return
+				}
+				// if it's an actual error, log it, close the connection, and break the inner loop to retry establishing a new connection
+				p.logger.Error("failed to wait for embedding job notification", "error", err)
+				_ = conn.Close(context.Background())
+				break // exit the loop
+			}
+
+			// if we got to this point , means WaitForNotification() was unblocked which means a notification was received
+			select {
+			case p.wakeCH <- struct{}{}: // try to send a wake signal to the workers to prompt them to poll for new jobs immediately
+			default:
+			}
+		}
+
 	}
 }
 
@@ -91,6 +294,10 @@ func (p *EmbeddingPool) reclaimStuckEmbeddingJobs(ctx context.Context) {
 }
 
 func (p *EmbeddingPool) run(ctx context.Context, workerID int) {
+	backoffInterval := p.pollInterval
+	timer := time.NewTimer(backoffInterval)
+	defer timer.Stop()
+
 	defer p.wg.Done()
 
 	defer func() {
@@ -106,35 +313,44 @@ func (p *EmbeddingPool) run(ctx context.Context, workerID int) {
 		case <-ctx.Done():
 			p.logger.Info("embedding worker stopping", "worker_id", workerID)
 			return
-		case <-time.After(p.pollInterval):
+		case <-timer.C:
 			p.firstPollOnce.Do(func() {
 				elapsedMs := int64(0)
 				if !p.startedAt.IsZero() {
 					elapsedMs = time.Since(p.startedAt).Milliseconds()
 				}
 
-				p.logger.Info("embedding worker first poll attempt",
+				p.logger.Info("embedding worker first fallback poll attempt",
 					"worker_id", workerID,
 					"elapsed_ms", elapsedMs,
 					"poll_interval", p.pollInterval.String(),
 				)
 			})
+			p.logger.Info("embedding worker fallback polling for jobs", "worker_id", workerID)
 
-			p.poll(ctx, workerID)
+			found, err := p.poll(ctx, workerID)
+			backoffInterval = adjustBackoff(backoffInterval, p.pollInterval, p.maxBackoffInterval, found, err)
+			resetTimer(timer, backoffInterval)
+		case <-p.wakeCH:
+			p.logger.Info("embedding worker received wake signal", "worker_id", workerID)
+			found, err := p.poll(ctx, workerID)
+			backoffInterval = adjustBackoff(backoffInterval, p.pollInterval, p.maxBackoffInterval, found, err)
+			resetTimer(timer, backoffInterval)
 		}
+
 	}
 }
 
-func (p *EmbeddingPool) poll(ctx context.Context, workerID int) {
+func (p *EmbeddingPool) poll(ctx context.Context, workerID int) (bool, error) {
 	lockedBy := p.lockedBy(workerID)
-	jobs, err := p.models.EmbeddingJobs.ClaimPending(1, lockedBy)
+	jobs, err := p.models.EmbeddingJobs.ClaimPending(p.claimBatchSize, lockedBy)
 	if err != nil {
 		p.logger.Error("failed to claim pending embedding jobs", "worker_id", workerID, "error", err)
-		return
+		return false, err
 	}
 
 	if len(jobs) == 0 {
-		return
+		return false, nil
 	}
 
 	p.firstClaimOnce.Do(func() {
@@ -153,6 +369,8 @@ func (p *EmbeddingPool) poll(ctx context.Context, workerID int) {
 	for _, job := range jobs {
 		p.process(ctx, workerID, lockedBy, job)
 	}
+
+	return true, nil
 }
 
 func (p *EmbeddingPool) process(ctx context.Context, workerID int, lockedBy string, job *data.EmbeddingJob) {
@@ -302,6 +520,55 @@ func (p *EmbeddingPool) markJobFailed(workerID int, lockedBy string, job *data.E
 		"attempts", job.Attempts+1,
 		"cause", cause,
 	)
+}
+
+func adjustBackoff(current, base, max time.Duration, found bool, err error) time.Duration {
+	if err != nil {
+		return nextBackoff(current, max)
+	}
+	if found {
+		return base
+	}
+	return nextBackoff(current, max)
+}
+
+func nextBackoff(current, max time.Duration) time.Duration {
+	if current <= 0 {
+		return max
+	}
+	if current >= max {
+		return max
+	}
+	next := current * 2
+	if next > max {
+		return max
+	}
+	return next
+}
+
+func resetTimer(timer *time.Timer, d time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(d)
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (p *EmbeddingPool) lockedBy(workerID int) string {
