@@ -141,9 +141,6 @@ run/api:
 		-embedding-reclaim-interval=${embedding-reclaim-interval} \
 		-embedding-stuck-job-threshold=${embedding-stuck-job-threshold} \
 		-embedding-batch-size=${embedding-batch-size} \
-		-inline-embedding-enabled=${inline-embedding-enabled} \
-		-async-embedding-enabled=${async-embedding-enabled} \
-		-dual-write-embedding-jobs=${dual-write-embedding-jobs}
 
 ## phase0/run/api : run API and tee logs into tmp/phase0 for baseline captures
 .PHONY: phase0/run/api

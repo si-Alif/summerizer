@@ -48,6 +48,8 @@ type config struct {
 		source_timeout         time.Duration
 		reclaim_interval       time.Duration
 		stuck_source_threshold time.Duration
+		claim_batch_size       int
+		max_backoff_interval   time.Duration
 	}
 	embedding_pool struct {
 		worker_count         int
@@ -159,6 +161,8 @@ func main() {
 	flag.DurationVar(&cfg.worker_pool.source_timeout, "source-timeout", 90*time.Second, "Timeout for processing a single source")
 	flag.DurationVar(&cfg.worker_pool.reclaim_interval, "reclaim-interval", 1*time.Minute, "Interval between reclaiming stale sources")
 	flag.DurationVar(&cfg.worker_pool.stuck_source_threshold, "stuck-source-threshold", 10*time.Minute, "Threshold for considering a source as stuck")
+	flag.IntVar(&cfg.worker_pool.claim_batch_size, "worker-claim-batch-size", 1, "Number of sources to claim per poll")
+	flag.DurationVar(&cfg.worker_pool.max_backoff_interval, "worker-max-backoff-interval", 2*time.Minute, "Max backoff interval when source queue is empty")
 
 	// embedding worker pool settings
 	flag.IntVar(&cfg.embedding_pool.worker_count, "embedding-worker-count", 4, "Number of embedding worker goroutines")
@@ -322,13 +326,16 @@ func main() {
 	workerPoolStartedAt := time.Now()
 	workerPool := worker.NewPool(
 		models,
-		cfg.worker_pool.worker_count,
-		cfg.worker_pool.poll_interval,
 		logger,
 		pipeline,
-		cfg.worker_pool.source_timeout,
-		cfg.worker_pool.reclaim_interval,
-		cfg.worker_pool.stuck_source_threshold,
+		cfg.db.dsn,
+		worker.WithIngestionWorkerCount(cfg.worker_pool.worker_count),
+		worker.WithIngestionPollInterval(cfg.worker_pool.poll_interval),
+		worker.WithIngestionSourceTimeout(cfg.worker_pool.source_timeout),
+		worker.WithIngestionReclaimInterval(cfg.worker_pool.reclaim_interval),
+		worker.WithIngestionStuckSourceThreshold(cfg.worker_pool.stuck_source_threshold),
+		worker.WithIngestionClaimBatchSize(cfg.worker_pool.claim_batch_size),
+		worker.WithIngestionMaxBackoffInterval(cfg.worker_pool.max_backoff_interval),
 	)
 	logStartupPhase("init_worker_pool", workerPoolStartedAt)
 
