@@ -2,26 +2,18 @@
 
 ## TL;DR
 
-- Built a production-style RAG backend in Go with async ingestion and embedding pipelines
-- Uses PostgreSQL + pgvector (HNSW) for semantic retrieval
-- Designed for reliability under concurrency (job queues, retries, failure recovery)
-- Built with production-oriented constraints: reliability, failure isolation, and observability.
-- Measured improvements: cold start 30s → 8s, Hit@1 92%, p95 search latency ~1.18s🐱
-
----
-
-## Why I Built This
-
-I wanted to understand what actually goes wrong in a RAG system once you move past the happy path demo. Fetching text, calling an embedding API, and doing cosine similarity is trivial. What I wanted to figure out was everything _after_ that. What happens when the embedding model is cold? What happens when two workers race to claim the same source? What happens when the pipeline crashes halfway through ingestion and the source just... sits there forever?
-
-So I built Summerizer as a real backend project ; not a prototype, not a notebook ; with queue-based ingestion, worker pools, consistency controls, vector retrieval, and phase-based evaluation to prove that changes actually helped. Every design decision came from either hitting a problem or actively thinking about what would break next.
+- Production-style RAG backend in Go with async ingestion and embedding pipelines
+- PostgreSQL + pgvector (HNSW) for semantic retrieval
+- Reliability under concurrency: job queues, retries, SKIP LOCKED, optimistic versioning
+- Hybrid LISTEN/NOTIFY + exponential backoff reduces idle DB polling without hurting latency
+- Measured outcomes: cold start 30s -> 8s, Hit@1 0.923, p95 search ~1.18s 😺
 
 ---
 
 ## What It Does
 
 - Users create collections and attach external sources (currently web ingestion)
-- Sources go through an async pipeline: fetch → clean → chunk → store → embed
+- Sources go through an async pipeline: fetch -> clean -> chunk -> store -> embed
 - Chunks + vectors live in PostgreSQL (`pgvector`) for semantic retrieval
 - Collections support scoped search and grounded Q&A with source citations
 
@@ -75,10 +67,12 @@ sequenceDiagram
 
     U->>API: Add source URL to collection
     API->>DB: Insert source (pending)
+    DB-->>IW: pg_notify('sources', id) via trigger
     IW->>DB: Claim pending source (SKIP LOCKED)
-    IW->>IW: fetch → clean → chunk
+    IW->>IW: fetch -> clean -> chunk
     IW->>DB: Store chunks
     IW->>DB: Enqueue embedding job
+    DB-->>EW: pg_notify('embedding_jobs', id) via trigger
     EW->>DB: Claim embedding job (SKIP LOCKED)
     EW->>DB: Write chunk embeddings
     EW->>DB: Mark source completed
@@ -92,41 +86,40 @@ sequenceDiagram
 
 ---
 
-## The Journey 🐱
+## Why I Built This
 
-I didn't start with this architecture. I started with the obvious thing: inline embedding ; fetch a source, chunk it, embed it, all in one synchronous pipeline, all in the same worker. It worked fine until it didn't.
+I wanted to see what breaks in a RAG system once you move beyond the demo path. Embedding and cosine similarity are the easy part. The hard part is everything after that: concurrency, retries, data consistency, and keeping the system reliable under load.
 
-The moment I added concurrency, the cracks showed up fast. The embedding model has a cold start. If ten sources get ingested simultaneously and all try to embed at the same time, half of them time out, half of those retry, and suddenly everything is waiting on a model that's already overloaded. Ingestion and embedding were fighting over the same resources, and a flaky embedding run would mark an entire source as failed - even if the fetch and chunk steps had worked perfectly.
+Summerizer is a real backend project (not a notebook): queue-based ingestion, worker pools, and phase-based measurement to prove improvements. Every design decision came from production-style failures or a “what would break next?” mindset.
 
-So I split them. Ingestion became its own queue, its own workers, its own completion state. Once chunks are stored, the pipeline enqueues an `embedding_job` and returns. A completely separate pool of embedding workers picks those up on their own schedule. Now a cold model only affects embedding latency ; it doesn't corrupt ingestion state or block new sources from being processed.
+---
 
-That one change dropped cold startup time from ~30s to ~8s between phase0 and phase2 captures. Not because the embedding got faster ; because ingestion was no longer waiting for it.
+## Worker Pool Design (Hybrid Scheduling)
 
-The other thing I kept running into was correctness under concurrency. With multiple workers polling the same queue, you need to guarantee that two workers can't claim the same source. The naive solution is a status flag ; set it to `processing` before you start. But there's a race window between the SELECT that sees a pending source and the UPDATE that marks it processing. I used `FOR UPDATE SKIP LOCKED` inside a transaction so the lock and the status update are atomic. No race window, no double-processing .
-
-I also added optimistic versioning to every state transition. Every time the pipeline updates a source ; step by step as it moves through fetch → clean → chunk → store → embed ; it bumps a version field. If two things try to write to the same record simultaneously, the second one gets an edit conflict error instead of silently overwriting. This surfaces concurrency bugs as explicit failures rather than mysterious state corruption.
-
-The cleaner was its own rabbit hole. HTML from the real web is not clean. The first version just pulled all `<p>` tags and called it done. That broke immediately on sites where every line is wrapped in `<li>`, or where nav/footer content bleeds into the body, or where the actual content is buried under layers of nesting. The current cleaner converts to Markdown first (best quality), falls back to legacy HTML traversal if that fails, and falls back to plain text as a last resort. It also bails out of Markdown extraction if it returns more than 2,000 blocks , because that's almost always a sign the HTML structure is broken, not that the page is genuinely that dense.
-
-By the end I had phase-based logs, DB snapshots, and E2E automation scripts ; not because I planned to from the start, but because I kept needing to prove to myself that a change had actually helped. That habit of measuring before claiming turned out to be the most useful thing I built.
+- One dedicated `pgx.Conn` per pool runs `LISTEN` and blocks on `WaitForNotification`.
+- A buffered wake channel (size 1) coalesces bursts, preventing a thundering herd on the DB.
+- Workers select on wake signal, fallback timer, and context cancellation.
+- Fallback polling uses exponential backoff up to a configurable max interval.
+- A reconnect loop keeps the listener alive across DB restarts or network blips.
 
 ---
 
 ## Engineering Decisions
 
-| Problem                                                      | Decision                                                                                                            | Why It Matters                                                                                                    |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Inline embedding made ingestion fragile under model pressure | Split into two independent queues: `sources` (ingestion) + `embedding_jobs` (embedding) with dedicated worker pools | Ingestion completes fast. Embedding failures don't cascade backwards. Query path stays unaffected.                |
-| Concurrent workers racing to claim the same source           | `FOR UPDATE SKIP LOCKED` inside a transaction + optimistic versioning on every state transition                     | No double-processing. Edit conflicts are explicit errors, not silent corruption.                                  |
-| Vector search without another service to run                 | PostgreSQL + `pgvector` (`vector(768)`) + HNSW cosine index                                                         | One fewer thing to operate. Retrieval performance holds at this scale and the operational simplicity is worth it. |
-| Embedding backend flexibility                                | Configurable backend (Nomic online by default, Ollama offline optional)                                             | Lets you trade cost/latency for local control without redesigning the pipeline.                                   |
-| "It's better now" isn't evidence                             | Phase-based logs, DB snapshots, strict retrieval evals, E2E automation                                              | Every optimization claim is backed by a captured measurement. The numbers are in `tmp/`.                          |
+| Problem                                                      | Decision                                                                 | Why It Matters                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Inline embedding made ingestion fragile under model pressure | Split into two queues: `sources` + `embedding_jobs` with dedicated pools | Ingestion completes fast. Embedding failures do not cascade backward. |
+| Concurrent workers racing to claim the same source           | `FOR UPDATE SKIP LOCKED` in a transaction + optimistic versioning        | No double-processing. Conflicts are explicit.                         |
+| Fixed-interval polling burning DB calls when idle            | Hybrid LISTEN/NOTIFY + exponential backoff + slow fallback poll          | Workers wake instantly on new work; idle polling stays quiet.         |
+| Notification bursts causing thundering herd                  | Buffered wake channel (size 1) with non-blocking send                    | 20 inserts cause 1 poll, not 20.                                      |
+| Vector search without another service to run                 | PostgreSQL + `pgvector` (`vector(768)`) + HNSW cosine index              | One fewer system to operate.                                          |
+| Embedding backend flexibility                                | Nomic online by default, Ollama offline optional                         | Trade cost/latency vs. local control without redesign.                |
 
 ---
 
 ## Measured Outcomes
 
-From captured evaluation runs , not written for the README 🐱.
+From captured evaluation runs:
 
 | Metric                    | Value                                                 |
 | ------------------------- | ----------------------------------------------------- |
@@ -135,17 +128,30 @@ From captured evaluation runs , not written for the README 🐱.
 | MRR                       | `0.962`                                               |
 | Search p95 latency        | `1.177s` (strict eval set)                            |
 | Grounded answer cite rate | `0.846`                                               |
-| Cold startup time         | ~`30s` → ~`8s` (phase0 → phase2)                      |
+| Cold startup time         | ~`30s` -> ~`8s` (phase0 -> phase2)                    |
 | E2E phase2 run            | 5/5 sources completed, search + ask returned HTTP 200 |
 
-Treat these as workload-specific engineering evidence, not universal benchmarks. The value isn't the specific numbers — it's that there are numbers at all.
+Treat these as workload-specific evidence, not universal benchmarks.
+
+---
+
+## Operational Evidence: DB Polling Snapshots (Production)
+
+These are cumulative `pg_stat_statements` counts from Render. The slope between snapshots is what matters.
+
+| Snapshot (local time) | sources ClaimPending SELECT count | embedding_jobs ClaimPending SELECT count | Notes                                                                  |
+| --------------------- | --------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------- |
+| 15:47                 | 11,684                            | 11,672                                   | Fixed-interval polling on both pools                                   |
+| 16:06                 | 12,324                            | 11,700                                   | Embedding LISTEN/NOTIFY deployed; LISTEN visible in active connections |
+| 16:13                 | 13,314                            | 11,716                                   | Embedding count grows slowly while sources keep polling                |
+| 21:51                 | 17,534                            | 11,848                                   | Both pools on hybrid; LISTEN sources + embedding_jobs visible          |
 
 ---
 
 ## Tech Stack
 
 - **Go 1.25**
-- **PostgreSQL 16 + pgvector** -> storage, queue state, and vector index all in one place
+- **PostgreSQL 16 + pgvector** -> storage, queue state, and vector index in one place
 - **httprouter, pgx** -> no framework, deliberate choices
 - **Embedder** -> Nomic online (default) or Ollama offline; backend chosen at startup
 - **LLM** -> Gemini API for answer generation
@@ -159,14 +165,14 @@ Working:
 
 - User registration, activation, auth tokens
 - Collection and source management APIs
-- Async ingestion workers + async embedding workers
+- Async ingestion workers + async embedding workers (hybrid LISTEN/NOTIFY scheduling)
 - Full pipeline with retries, reclaim loops, and step-tagged failure tracking
 - Semantic search and grounded ask with source citations
 - PostgreSQL migrations with HNSW vector index strategy
 - Middleware: auth, activation gate, rate limiter, panic recovery
 - Embedding backend selection (online Nomic by default; offline Ollama optional)
 
-Honest gaps 🐱:
+Honest gaps:
 
 - URL type detection covers `web/youtube/pdf` but only web ingestion is implemented right now
 - Sharing/permissions model (owner/editor/viewer/public) is designed, not built yet
@@ -274,7 +280,7 @@ Set `SUMMERIZER_DEBUG_VARS_TOKEN` and query with:
 make phase2/run/e2e
 ```
 
-Runs a full collection → sources → search → ask scenario and drops artifacts under `tmp/phase2/e2e/<run_id>/`.
+Runs a full collection -> sources -> search -> ask scenario and drops artifacts under `tmp/phase2/e2e/<run_id>/`.
 
 ---
 
@@ -307,12 +313,12 @@ POST   /v1/collections/:id/ask
 
 ---
 
-## If you're reviewing the code, I'd appreciate feedback on the following areas 🐱
+## If you're reviewing the code, I'd appreciate feedback on the following areas
 
-- **`pool.go` + `embedding_pool.go`** ⟹ how the two worker pools handle panics, context cancellation on shutdown, and the `firstPollOnce` / `firstClaimOnce` instrumentation for measuring startup latency
-- **`pipeline.go`** ⟹ step-tagged state transitions and `classifyFailure`, which separates permanent HTTP failures (don't retry) from transient ones (do retry)
-- **`embedding_jobs.go`** ⟹ `ClaimPending` does SELECT and UPDATE in one transaction so there's no race window between seeing a job and locking it
-- **`chunker.go`** ⟹ the token budget math (prefix tokens count against the limit) and the sentence splitter's abbreviation list
-- **`cleaner.go`** ⟹ three-strategy fallback and the Markdown parser state machine that tracks section hierarchy across headings
+- **`pool.go` + `embedding_pool.go`** -> hybrid LISTEN/NOTIFY scheduler: wake channel coalescing, backoff on empty polls, listener reconnect loop
+- **`pipeline.go`** -> step-tagged state transitions and `classifyFailure` (permanent vs transient errors)
+- **`embedding_jobs.go`** -> `ClaimPending` does SELECT + UPDATE in one transaction
+- **`chunker.go`** -> token budget math and sentence splitter
+- **`cleaner.go`** -> three-strategy fallback and Markdown parser state machine
 
-The design didn't come out this way on the first try. The commit history shows it 😸.
+The design did not come out this way on the first try. The commit history shows it.
